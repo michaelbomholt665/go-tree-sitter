@@ -1,0 +1,25 @@
+# Build artifacts
+/build/
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+
+# Generated grammar data
+/data/tree-sitter/grammar/*
+!data/tree-sitter/grammar/.gitkeep
+/data/*.lbug
+
+# Test output
+coverage.out
+coverage.html
+
+# Local editor / agent files
+.vscode/
+.idea/
+.codex
+
+# OS files
+.DS_Store
+Thumbs.db
