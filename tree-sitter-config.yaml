@@ -26,6 +26,8 @@ abi_versions:
   "0.24.7": { min: 14, max: 14 }
   "0.24.8": { min: 14, max: 14 }
   "0.25.0": { min: 15, max: 15 }
+  "0.26.3": { min: 15, max: 15 }
+  "0.26.8": { min: 15, max: 15 }
 
 languages:
   - name: "python"
@@ -90,10 +92,10 @@ languages:
     note: "Community maintained; installed module version v0.7.0 uses tree-sitter-cli v0.24.4 and emits ABI 14."
 
   - name: "proto"
-    version: "v0.0.0-20260315065021-d65a18ce7c22"
-    tree_sitter_version: "0.25.0"
+    version: "v0.0.0-20260623132456-cf8e4eba6e5b"
+    tree_sitter_version: "0.26.3"
     repository: "https://github.com/coder3101/tree-sitter-proto.git"
-    note: "Installed pseudo-version emits ABI 15."
+    note: "Installed pseudo-version uses tree-sitter-cli v0.26.3 and emits ABI 15."
 
   - name: "go.mod"
     version: "v1.1.0"
@@ -113,10 +115,10 @@ languages:
     note: "Installed module version v0.3.11 targets tree-sitter-cli v0.24.7 / ABI 14."
 
   - name: "cypher"
-    version: "v0.0.1"
-    tree_sitter_version: "0.24.8"
-    repository: "https://github.com/pupli/tree-sitter-cypher.git"
-    note: "Installed module version v0.0.1 emits ABI 14."
+    version: "v0.0.2-0.20241111152014-775717a2de6c"
+    tree_sitter_version: "0.26.8"
+    repository: "https://github.com/simplificare-org/tree-sitter-cypher.git"
+    note: "Pinned to the first corrected Cypher grammar commit after the mislabeled v0.0.1 tag; regenerated locally with tree-sitter-cli v0.26.8 and emits ABI 15."
 
 output:
   grammar_base: "data/tree-sitter/grammar" # this is the end dir for compiled and moved files

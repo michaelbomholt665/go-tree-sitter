@@ -4,8 +4,8 @@ go 1.26.0
 
 require (
 	github.com/DerekStride/tree-sitter-sql v0.3.11
-	github.com/coder3101/tree-sitter-proto v0.0.0-20260315065021-d65a18ce7c22
-	github.com/pupli/tree-sitter-cypher v0.0.1
+	github.com/coder3101/tree-sitter-proto v0.0.0-20260623132456-cf8e4eba6e5b
+	github.com/pupli/tree-sitter-cypher v0.0.2-0.20241111152014-775717a2de6c
 	github.com/tree-sitter-grammars/tree-sitter-toml v0.7.0
 	github.com/tree-sitter-grammars/tree-sitter-yaml v0.7.2
 	github.com/tree-sitter/go-tree-sitter v0.25.0
