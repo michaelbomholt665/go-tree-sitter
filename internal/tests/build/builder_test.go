@@ -2,8 +2,10 @@ package build_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/michaelbomholt665/go-tree-sitter/internal/tests/testutil"
@@ -55,6 +57,51 @@ func TestBuilderClonesAndGeneratesGrammarSources(t *testing.T) {
 
 	if len(runner.Runs) != 4 {
 		t.Fatalf("expected clone, fetch, checkout, and generate commands, got %d", len(runner.Runs))
+	}
+}
+
+func TestBuilderRejectsGeneratorVersionCopiedFromGrammarVersion(t *testing.T) {
+	t.Parallel()
+	cfg := &ts.Config{Version: "2.0", BuildDir: t.TempDir(), TreeSitterCLIVersion: "0.26.8", GenerateABI: 15,
+		Languages: []ts.Language{{Name: "python", Version: "v0.25.0", Repository: "https://example.invalid/python"}},
+		Output:    ts.Output{GrammarBase: t.TempDir(), GenerateManifest: true}}
+	runner := &testutil.RecordingRunner{OnOutput: func(_ context.Context, cmd ts.Command) (string, error) {
+		if cmd.Name == "tree-sitter" {
+			return "tree-sitter 0.25.0", nil
+		}
+		return "", errors.New("unexpected output command")
+	}}
+	err := tsbuild.NewBuilder(runner, ioDiscard{}, ioDiscard{}).Build(context.Background(), cfg, ts.BuildRequest{})
+	if err == nil || !strings.Contains(err.Error(), "configured 0.26.8, invoked 0.25.0") {
+		t.Fatalf("expected invoked generator mismatch, got %v", err)
+	}
+}
+
+func TestBuilderReportsEveryFailedGrammar(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	cfg := &ts.Config{Version: "1.0", BuildDir: dir, Languages: []ts.Language{
+		{Name: "python", Version: "v1", Repository: "https://example.invalid/python"},
+		{Name: "go", Version: "v1", Repository: "https://example.invalid/go"},
+	}, Output: ts.Output{GrammarBase: t.TempDir(), GenerateManifest: true}}
+	runner := &testutil.RecordingRunner{OnRun: func(_ context.Context, cmd ts.Command) error {
+		if cmd.Name == "git" && len(cmd.Args) > 0 && cmd.Args[0] == "clone" {
+			return errors.New("clone failed")
+		}
+		return nil
+	}}
+	err := tsbuild.NewBuilder(runner, ioDiscard{}, ioDiscard{}).Build(context.Background(), cfg, ts.BuildRequest{})
+	if err == nil || !strings.Contains(err.Error(), "build python") || !strings.Contains(err.Error(), "build go") {
+		t.Fatalf("expected both grammar failures, got %v", err)
+	}
+	cloneCount := 0
+	for _, run := range runner.Runs {
+		if run.Name == "git" && len(run.Args) > 0 && run.Args[0] == "clone" {
+			cloneCount++
+		}
+	}
+	if cloneCount != 2 {
+		t.Fatalf("expected both grammars attempted, got %d clone commands", cloneCount)
 	}
 }
 
@@ -125,7 +172,10 @@ func TestBuilderInstallsNodeDependenciesWhenPackageJSONExists(t *testing.T) {
 					if err := os.MkdirAll(filepath.Join(dest, "tsx"), 0o755); err != nil {
 						return err
 					}
-					return os.WriteFile(filepath.Join(dest, "package.json"), []byte(`{"dependencies":{"tree-sitter-javascript":"^0.23.1"}}`), 0o644)
+					if err := os.WriteFile(filepath.Join(dest, "package.json"), []byte(`{"dependencies":{"tree-sitter-javascript":"1.0.0"}}`), 0o644); err != nil {
+						return err
+					}
+					return os.WriteFile(filepath.Join(dest, "package-lock.json"), []byte(`{"lockfileVersion":3}`), 0o644)
 				}
 			case "npm":
 				return os.MkdirAll(filepath.Join(cmd.Dir, "node_modules"), 0o755)
@@ -143,7 +193,7 @@ func TestBuilderInstallsNodeDependenciesWhenPackageJSONExists(t *testing.T) {
 	for _, run := range runner.Runs {
 		if run.Name == "npm" {
 			foundNPM = true
-			if got, want := run.Args, []string{"install", "--ignore-scripts"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+			if got, want := run.Args, []string{"ci", "--ignore-scripts"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
 				t.Fatalf("unexpected npm args: %v", got)
 			}
 		}

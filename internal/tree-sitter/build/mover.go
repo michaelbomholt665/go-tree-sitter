@@ -2,29 +2,36 @@ package build
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	_jsii "github.com/michaelbomholt665/go-tree-sitter/internal/tree-sitter"
 )
 
 type Mover struct {
-	clock   Clock
-	cleaner *Cleaner
-	stdout  io.Writer
-	stderr  io.Writer
+	cleaner   *Cleaner
+	validator ArtifactValidator
+	stdout    io.Writer
+	stderr    io.Writer
 }
 
-func NewMover(clock Clock, cleaner *Cleaner, stdout, stderr io.Writer) *Mover {
-	if clock == nil {
-		clock = RealClock{}
-	}
+func NewMover(_ Clock, cleaner *Cleaner, stdout, stderr io.Writer) *Mover {
+	return NewMoverWithValidator(cleaner, NewNativeValidator(), stdout, stderr)
+}
+
+func NewMoverWithValidator(cleaner *Cleaner, validator ArtifactValidator, stdout, stderr io.Writer) *Mover {
 	if cleaner == nil {
 		cleaner = NewCleaner()
+	}
+	if validator == nil {
+		validator = NewNativeValidator()
 	}
 	if stdout == nil {
 		stdout = io.Discard
@@ -32,141 +39,245 @@ func NewMover(clock Clock, cleaner *Cleaner, stdout, stderr io.Writer) *Mover {
 	if stderr == nil {
 		stderr = io.Discard
 	}
-	return &Mover{
-		clock:   clock,
-		cleaner: cleaner,
-		stdout:  stdout,
-		stderr:  stderr,
-	}
+	return &Mover{cleaner: cleaner, validator: validator, stdout: stdout, stderr: stderr}
 }
 
-func (m *Mover) Move(_ context.Context, cfg *_jsii.Config, req _jsii.MoveRequest) error {
+type stagedLanguage struct {
+	language   _jsii.Language
+	binaries   []string
+	provenance map[string]BinaryProvenance
+	nodeTypes  bool
+	queries    bool
+}
+
+func (m *Mover) Move(ctx context.Context, cfg *_jsii.Config, req _jsii.MoveRequest) error {
+	if !cfg.Output.GenerateManifest {
+		return errors.New("publication requires a validated manifest; generate_manifest=false is no longer supported")
+	}
 	languages, err := cfg.ResolveLanguages(req.Language)
 	if err != nil {
 		return err
 	}
-
-	for _, lang := range languages {
-		if err := m.moveLanguage(cfg, lang, req); err != nil {
-			return fmt.Errorf("move %s: %w", lang.Name, err)
-		}
-	}
-
-	return nil
-}
-
-func (m *Mover) moveLanguage(cfg *_jsii.Config, lang _jsii.Language, req _jsii.MoveRequest) error {
-	srcBinDir := binaryDir(cfg, lang)
-	outputDir := filepath.Join(cfg.Output.GrammarBase, lang.Name)
-	binaries, err := collectBinaries(srcBinDir, lang)
+	base, err := filepath.Abs(cfg.Output.GrammarBase)
 	if err != nil {
-		if hasMovedArtifacts(outputDir, lang) {
-			fmt.Fprintf(m.stdout, "skipping %s; artifacts already exist in %s\n", lang.Name, outputDir)
-			return nil
-		}
-		return fmt.Errorf("compiled binaries not found in %q; run `tree-sitter compile` first", srcBinDir)
+		return fmt.Errorf("resolve output directory: %w", err)
 	}
-	if len(binaries) == 0 {
-		if hasMovedArtifacts(outputDir, lang) {
-			fmt.Fprintf(m.stdout, "skipping %s; artifacts already exist in %s\n", lang.Name, outputDir)
-			return nil
+	if err := os.MkdirAll(filepath.Dir(base), 0o755); err != nil {
+		return fmt.Errorf("create output parent: %w", err)
+	}
+	stage, err := os.MkdirTemp(filepath.Dir(base), ".grammar-staging-*")
+	if err != nil {
+		return fmt.Errorf("create release staging directory: %w", err)
+	}
+	defer os.RemoveAll(stage)
+	if info, statErr := os.Stat(base); statErr == nil && info.IsDir() {
+		if err := copyDirContents(base, stage); err != nil {
+			return fmt.Errorf("seed staging directory from current release: %w", err)
 		}
-		return fmt.Errorf("compiled binaries not found in %q; run `tree-sitter compile` first", srcBinDir)
+	} else if statErr != nil && !os.IsNotExist(statErr) {
+		return fmt.Errorf("inspect current release: %w", statErr)
 	}
 
-	if err := os.MkdirAll(outputDir, 0o755); err != nil {
-		return fmt.Errorf("create output directory %q: %w", outputDir, err)
-	}
-
-	copiedBinaries := make([]string, 0, len(binaries))
-	for _, sourcePath := range binaries {
-		targetPath := filepath.Join(outputDir, filepath.Base(sourcePath))
-		if err := copyFile(sourcePath, targetPath, req.Force); err != nil {
-			return err
-		}
-		copiedBinaries = append(copiedBinaries, targetPath)
-	}
-
-	src := sourceDir(cfg, lang)
-	repoRoot := buildRootDir(cfg, lang)
-	hasNodeTypes := false
-	if req.Mode.IncludesNodeTypes() {
-		hasNodeTypes, err = m.copyNodeTypes(src, outputDir, req.Force)
+	staged := make(map[string]stagedLanguage, len(languages))
+	var preparationErrors []error
+	for _, lang := range languages {
+		prepared, err := m.stageLanguage(cfg, stage, lang, req)
 		if err != nil {
-			return err
-		}
-		if !hasNodeTypes {
-			fmt.Fprintf(m.stderr, "warning: node-types.json missing for %s\n", lang.Name)
-		}
-	}
-
-	hasQueries := false
-	if req.Mode.IncludesQueries() {
-		hasQueries, err = m.copyQueries(src, repoRoot, outputDir, req.Force)
-		if err != nil {
-			return err
-		}
-		if !hasQueries {
-			fmt.Fprintf(m.stderr, "warning: queries directory missing for %s\n", lang.Name)
-		}
-	}
-
-	if cfg.Output.GenerateManifest && !req.NoManifest {
-		manifest, err := GenerateManifest(lang, copiedBinaries, cfg, hasNodeTypes, hasQueries, m.clock.Now())
-		if err != nil {
-			return err
-		}
-		if err := manifest.WriteToFile(filepath.Join(outputDir, "manifest.json")); err != nil {
-			return err
-		}
-	}
-
-	if req.Clean {
-		if err := m.cleaner.CleanLanguage(cfg.BuildDir, lang.Name); err != nil {
-			return err
-		}
-	}
-
-	fmt.Fprintf(m.stdout, "moved %s artifacts to %s\n", lang.Name, outputDir)
-	return nil
-}
-
-func (m *Mover) copyNodeTypes(sourceDir, outputDir string, force bool) (bool, error) {
-	candidates := []string{
-		filepath.Join(sourceDir, "src", "node-types.json"),
-		filepath.Join(sourceDir, "node-types.json"),
-	}
-	for _, candidate := range candidates {
-		info, err := os.Stat(candidate)
-		if err == nil && !info.IsDir() {
-			target := filepath.Join(outputDir, "node-types.json")
-			return true, copyFile(candidate, target, force)
-		}
-	}
-	return false, nil
-}
-
-func (m *Mover) copyQueries(sourceDir, repoRoot, outputDir string, force bool) (bool, error) {
-	candidates := []string{
-		filepath.Join(sourceDir, "queries"),
-		filepath.Join(repoRoot, "queries"),
-	}
-
-	for _, queriesDir := range candidates {
-		info, err := os.Stat(queriesDir)
-		if err != nil || !info.IsDir() {
+			preparationErrors = append(preparationErrors, fmt.Errorf("stage %s: %w", lang.Name, err))
 			continue
 		}
-
-		target := filepath.Join(outputDir, "queries")
-		if err := copyDir(queriesDir, target, force); err != nil {
-			return false, err
-		}
-
-		return true, nil
+		staged[lang.Name] = prepared
+	}
+	if err := errors.Join(preparationErrors...); err != nil {
+		return err
 	}
 
-	return false, nil
+	items, err := collectReleaseValidationItems(stage, cfg)
+	if err != nil {
+		return err
+	}
+	measuredABI, validationErr := m.validator.Validate(ctx, items)
+	if validationErr != nil {
+		return fmt.Errorf("validate staged native release: %w", validationErr)
+	}
+
+	for _, lang := range languages {
+		prepared := staged[lang.Name]
+		manifest, err := GenerateManifest(lang, prepared.binaries, measuredABI, prepared.provenance, prepared.nodeTypes, prepared.queries)
+		if err != nil {
+			preparationErrors = append(preparationErrors, fmt.Errorf("manifest %s: %w", lang.Name, err))
+			continue
+		}
+		manifestPath := filepath.Join(stage, lang.Name, "manifest.json")
+		if err := manifest.WriteToFile(manifestPath); err != nil {
+			preparationErrors = append(preparationErrors, fmt.Errorf("manifest %s: %w", lang.Name, err))
+		}
+	}
+	if err := errors.Join(preparationErrors...); err != nil {
+		return err
+	}
+	if err := validateCatalog(stage, cfg, measuredABI); err != nil {
+		return fmt.Errorf("validate staged catalog: %w", err)
+	}
+	if err := publishAtomic(stage, base); err != nil {
+		return err
+	}
+
+	var cleanupErrors []error
+	if req.Clean {
+		for _, lang := range languages {
+			if err := m.cleaner.CleanLanguage(cfg.BuildDir, lang.Name); err != nil {
+				cleanupErrors = append(cleanupErrors, fmt.Errorf("clean %s after publication: %w", lang.Name, err))
+			}
+		}
+	}
+	fmt.Fprintf(m.stdout, "published %d grammar(s) atomically to %s\n", len(languages), base)
+	return errors.Join(cleanupErrors...)
+}
+
+func (m *Mover) stageLanguage(cfg *_jsii.Config, stage string, lang _jsii.Language, req _jsii.MoveRequest) (stagedLanguage, error) {
+	sourceBinaries, err := collectBinaries(binaryDir(cfg, lang), lang)
+	if err != nil || len(sourceBinaries) == 0 {
+		return stagedLanguage{}, fmt.Errorf("compiled binaries not found in %q; run `tree-sitter compile` first", binaryDir(cfg, lang))
+	}
+	outputDir := filepath.Join(stage, lang.Name)
+	if err := os.RemoveAll(outputDir); err != nil {
+		return stagedLanguage{}, fmt.Errorf("replace staged grammar directory: %w", err)
+	}
+	if err := os.MkdirAll(outputDir, 0o755); err != nil {
+		return stagedLanguage{}, fmt.Errorf("create staged grammar directory: %w", err)
+	}
+	result := stagedLanguage{language: lang, provenance: make(map[string]BinaryProvenance, len(sourceBinaries))}
+	for _, sourcePath := range sourceBinaries {
+		targetPath := filepath.Join(outputDir, filepath.Base(sourcePath))
+		if err := copyFile(sourcePath, targetPath, true); err != nil {
+			return stagedLanguage{}, err
+		}
+		var provenance BinaryProvenance
+		if err := readJSON(binaryProvenancePath(sourcePath), &provenance); err != nil {
+			return stagedLanguage{}, fmt.Errorf("load provenance for %q: %w", sourcePath, err)
+		}
+		result.binaries = append(result.binaries, targetPath)
+		result.provenance[targetPath] = provenance
+	}
+	source := sourceDir(cfg, lang)
+	nodeTypesPath, err := findNodeTypes(source)
+	if err != nil {
+		return stagedLanguage{}, err
+	}
+	if err := copyFile(nodeTypesPath, filepath.Join(outputDir, "node-types.json"), true); err != nil {
+		return stagedLanguage{}, err
+	}
+	result.nodeTypes = true
+	for binaryPath, provenance := range result.provenance {
+		checksum, err := checksumFile(filepath.Join(outputDir, "node-types.json"))
+		if err != nil {
+			return stagedLanguage{}, err
+		}
+		if checksum != provenance.NodeTypesSHA256 {
+			return stagedLanguage{}, fmt.Errorf("node-types.json revision mismatch for %q: generated %s, staged %s", binaryPath, provenance.NodeTypesSHA256, checksum)
+		}
+	}
+	if req.Mode.IncludesQueries() {
+		queriesSource, found := findQueries(source, buildRootDir(cfg, lang))
+		if found {
+			if err := copyDirContents(queriesSource, filepath.Join(outputDir, "queries")); err != nil {
+				return stagedLanguage{}, err
+			}
+			result.queries = true
+		}
+	}
+	sort.Strings(result.binaries)
+	return result, nil
+}
+
+func collectReleaseValidationItems(stage string, cfg *_jsii.Config) ([]ValidationItem, error) {
+	var items []ValidationItem
+	var collectionErrors []error
+	for _, lang := range cfg.Languages {
+		grammarDir := filepath.Join(stage, lang.Name)
+		binaries, err := collectBinaries(grammarDir, lang)
+		if err != nil || len(binaries) == 0 {
+			collectionErrors = append(collectionErrors, fmt.Errorf("%s: no staged binaries", lang.Name))
+			continue
+		}
+		queryPaths, err := collectQueryPaths(filepath.Join(grammarDir, "queries"))
+		if err != nil {
+			collectionErrors = append(collectionErrors, fmt.Errorf("%s: collect queries: %w", lang.Name, err))
+			continue
+		}
+		for _, binaryPath := range binaries {
+			platform, arch, err := parseBinaryMetadata(filepath.Base(binaryPath), lang)
+			if err != nil {
+				collectionErrors = append(collectionErrors, fmt.Errorf("%s: %w", lang.Name, err))
+				continue
+			}
+			items = append(items, ValidationItem{Language: lang, BinaryPath: binaryPath, Platform: platform, Arch: arch, NodeTypesPath: filepath.Join(grammarDir, "node-types.json"), QueryPaths: queryPaths, Sample: lang.Sample})
+		}
+	}
+	sort.Slice(items, func(i, j int) bool { return items[i].BinaryPath < items[j].BinaryPath })
+	return items, errors.Join(collectionErrors...)
+}
+
+func validateCatalog(stage string, cfg *_jsii.Config, measuredABI map[string]uint32) error {
+	var validationErrors []error
+	for _, lang := range cfg.Languages {
+		manifestPath := filepath.Join(stage, lang.Name, "manifest.json")
+		payload, err := os.ReadFile(manifestPath)
+		if err != nil {
+			validationErrors = append(validationErrors, fmt.Errorf("%s: read manifest: %w", lang.Name, err))
+			continue
+		}
+		var manifest ManifestData
+		if err := json.Unmarshal(payload, &manifest); err != nil {
+			validationErrors = append(validationErrors, fmt.Errorf("%s: parse manifest: %w", lang.Name, err))
+			continue
+		}
+		if manifest.Grammar != lang.Grammar {
+			validationErrors = append(validationErrors, fmt.Errorf("%s: manifest grammar %q does not match constructor identifier %q", lang.Name, manifest.Grammar, lang.Grammar))
+		}
+		if err := ValidateManifest(&manifest, filepath.Dir(manifestPath), measuredABI); err != nil {
+			validationErrors = append(validationErrors, fmt.Errorf("%s: %w", lang.Name, err))
+		}
+	}
+	return errors.Join(validationErrors...)
+}
+
+func publishAtomic(stage, destination string) error {
+	backup := destination + ".previous"
+	if err := os.RemoveAll(backup); err != nil {
+		return fmt.Errorf("remove stale release backup %q: %w", backup, err)
+	}
+	hadRelease := false
+	if _, err := os.Stat(destination); err == nil {
+		hadRelease = true
+		if err := os.Rename(destination, backup); err != nil {
+			return fmt.Errorf("preserve current release: %w", err)
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("inspect current release: %w", err)
+	}
+	if err := os.Rename(stage, destination); err != nil {
+		if hadRelease {
+			_ = os.Rename(backup, destination)
+		}
+		return fmt.Errorf("publish staged release: %w", err)
+	}
+	if hadRelease {
+		if err := os.RemoveAll(backup); err != nil {
+			return fmt.Errorf("remove previous release after successful publication: %w", err)
+		}
+	}
+	return nil
+}
+
+func findQueries(sourceDir, repoRoot string) (string, bool) {
+	for _, candidate := range []string{filepath.Join(sourceDir, "queries"), filepath.Join(repoRoot, "queries")} {
+		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+			return candidate, true
+		}
+	}
+	return "", false
 }
 
 func collectBinaries(root string, lang _jsii.Language) ([]string, error) {
@@ -174,10 +285,9 @@ func collectBinaries(root string, lang _jsii.Language) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	var files []string
 	for _, entry := range entries {
-		if entry.IsDir() {
+		if entry.Type()&os.ModeSymlink != 0 || entry.IsDir() {
 			continue
 		}
 		name := entry.Name()
@@ -189,12 +299,8 @@ func collectBinaries(root string, lang _jsii.Language) ([]string, error) {
 			files = append(files, filepath.Join(root, name))
 		}
 	}
+	sort.Strings(files)
 	return files, nil
-}
-
-func hasMovedArtifacts(outputDir string, lang _jsii.Language) bool {
-	binaries, err := collectBinaries(outputDir, lang)
-	return err == nil && len(binaries) > 0
 }
 
 func copyFile(sourcePath, targetPath string, force bool) error {
@@ -203,47 +309,48 @@ func copyFile(sourcePath, targetPath string, force bool) error {
 			return fmt.Errorf("target file %q already exists; rerun with --force to overwrite", targetPath)
 		}
 	}
-
-	content, err := os.ReadFile(sourcePath)
-	if err != nil {
-		return fmt.Errorf("read %q: %w", sourcePath, err)
-	}
-
 	if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
 		return fmt.Errorf("create directory for %q: %w", targetPath, err)
 	}
-
-	if err := os.WriteFile(targetPath, content, 0o644); err != nil {
+	source, err := os.Open(sourcePath)
+	if err != nil {
+		return fmt.Errorf("read %q: %w", sourcePath, err)
+	}
+	defer source.Close()
+	target, err := os.OpenFile(targetPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	if err != nil {
 		return fmt.Errorf("write %q: %w", targetPath, err)
 	}
-
+	if _, err := io.Copy(target, source); err != nil {
+		target.Close()
+		return fmt.Errorf("copy %q to %q: %w", sourcePath, targetPath, err)
+	}
+	if err := target.Sync(); err != nil {
+		target.Close()
+		return fmt.Errorf("sync %q: %w", targetPath, err)
+	}
+	if err := target.Close(); err != nil {
+		return fmt.Errorf("close %q: %w", targetPath, err)
+	}
 	return nil
 }
 
-func copyDir(sourceDir, targetDir string, force bool) error {
-	if force {
-		if err := os.RemoveAll(targetDir); err != nil {
-			return fmt.Errorf("remove existing directory %q: %w", targetDir, err)
-		}
-	} else if _, err := os.Stat(targetDir); err == nil {
-		return fmt.Errorf("target directory %q already exists; rerun with --force to overwrite", targetDir)
-	}
-
+func copyDirContents(sourceDir, targetDir string) error {
 	return filepath.WalkDir(sourceDir, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-
 		relative, err := filepath.Rel(sourceDir, path)
 		if err != nil {
 			return err
 		}
 		destination := filepath.Join(targetDir, relative)
-
 		if entry.IsDir() {
 			return os.MkdirAll(destination, 0o755)
 		}
-
+		if entry.Type()&os.ModeSymlink != 0 {
+			return fmt.Errorf("refuse to publish symbolic link %q", path)
+		}
 		return copyFile(path, destination, true)
 	})
 }

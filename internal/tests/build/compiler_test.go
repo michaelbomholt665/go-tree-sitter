@@ -19,6 +19,7 @@ func TestCompilerBuildsNamedBinary(t *testing.T) {
 	if err := os.MkdirAll(sourceDir, 0o755); err != nil {
 		t.Fatalf("create source dir: %v", err)
 	}
+	writeSourceProvenance(t, sourceDir)
 
 	cfg := &ts.Config{
 		Version:  "1.0",
@@ -68,6 +69,7 @@ func TestCompilerUsesConfiguredOSTarget(t *testing.T) {
 	if err := os.MkdirAll(sourceDir, 0o755); err != nil {
 		t.Fatalf("create source dir: %v", err)
 	}
+	writeSourceProvenance(t, sourceDir)
 
 	cfg := &ts.Config{
 		Version:  "1.0",
@@ -114,6 +116,14 @@ func TestCompilerUsesConfiguredOSTarget(t *testing.T) {
 	expected := filepath.Join(dir, "build", "python", "amd64", "python-v0.25.0-windows-amd64.dll")
 	if _, err := os.Stat(expected); err != nil {
 		t.Fatalf("expected binary %q to exist: %v", expected, err)
+	}
+}
+
+func writeSourceProvenance(t *testing.T, dir string) {
+	t.Helper()
+	payload := []byte(`{"source_repository":"https://example.invalid/grammar","source_revision":"0123456789012345678901234567890123456789","generator_version":"0.26.8","source_date_epoch":1700000000,"node_types_sha256":"test"}`)
+	if err := os.WriteFile(filepath.Join(dir, ".source-provenance.json"), payload, 0o644); err != nil {
+		t.Fatalf("write source provenance: %v", err)
 	}
 }
 

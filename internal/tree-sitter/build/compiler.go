@@ -2,11 +2,13 @@ package build
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	_jsii "github.com/michaelbomholt665/go-tree-sitter/internal/tree-sitter"
 )
@@ -42,13 +44,13 @@ func (c *Compiler) Compile(ctx context.Context, cfg *_jsii.Config, req _jsii.Com
 		return err
 	}
 
+	var compileErrors []error
 	for _, lang := range languages {
 		if err := c.compileLanguage(ctx, cfg, lang, target); err != nil {
-			return fmt.Errorf("compile %s for %s/%s: %w", lang.Name, target.Platform, target.Arch, err)
+			compileErrors = append(compileErrors, fmt.Errorf("compile %s for %s/%s: %w", lang.Name, target.Platform, target.Arch, err))
 		}
 	}
-
-	return nil
+	return errors.Join(compileErrors...)
 }
 
 func (c *Compiler) compileLanguage(ctx context.Context, cfg *_jsii.Config, lang _jsii.Language, target target) error {
@@ -68,11 +70,20 @@ func (c *Compiler) compileLanguage(ctx context.Context, cfg *_jsii.Config, lang 
 	if err != nil {
 		return fmt.Errorf("resolve output path %q: %w", outputPath, err)
 	}
-	toolchainEnv, cleanup, err := c.toolchainEnv(outDir, target)
+	var sourceProvenance SourceProvenance
+	if err := readJSON(filepath.Join(buildRootDir(cfg, lang), sourceProvenanceFilename), &sourceProvenance); err != nil {
+		return fmt.Errorf("load source provenance; run `tree-sitter build` first: %w", err)
+	}
+	toolchainEnv, compiler, cleanup, err := c.toolchainEnv(ctx, outDir, target)
 	if err != nil {
 		return err
 	}
 	defer cleanup()
+	toolchainEnv["SOURCE_DATE_EPOCH"] = fmt.Sprintf("%d", sourceProvenance.SourceDateEpoch)
+	if len(cfg.BuildFlags) > 0 {
+		toolchainEnv["CFLAGS"] = strings.Join(cfg.BuildFlags, " ")
+		toolchainEnv["CXXFLAGS"] = strings.Join(cfg.BuildFlags, " ")
+	}
 
 	fmt.Fprintf(c.stdout, "compiling %s for %s/%s\n", lang.Name, target.Platform, target.Arch)
 	if err := c.runner.Run(ctx, _jsii.Command{
@@ -84,22 +95,69 @@ func (c *Compiler) compileLanguage(ctx context.Context, cfg *_jsii.Config, lang 
 		return fmt.Errorf("run tree-sitter build: %w", err)
 	}
 
-	if _, err := os.Stat(outputPath); err != nil {
-		return fmt.Errorf("expected compiled library %q was not created", outputPath)
+	if info, err := os.Stat(absoluteOutputPath); err != nil {
+		return fmt.Errorf("expected compiled library %q was not created", absoluteOutputPath)
+	} else if !info.Mode().IsRegular() {
+		return fmt.Errorf("compiled library %q is not a regular file", absoluteOutputPath)
+	}
+
+	provenance := BinaryProvenance{
+		Filename:         filepath.Base(absoluteOutputPath),
+		SourceRepository: sourceProvenance.SourceRepository,
+		SourceRevision:   sourceProvenance.SourceRevision,
+		GeneratorVersion: sourceProvenance.GeneratorVersion,
+		GenerateABI:      sourceProvenance.GenerateABI,
+		SourceDateEpoch:  sourceProvenance.SourceDateEpoch,
+		NodeTypesSHA256:  sourceProvenance.NodeTypesSHA256,
+		TargetTriple:     targetTriple(target),
+		Compiler:         compiler.Name,
+		CompilerVersion:  compiler.Version,
+		BuildFlags:       append([]string(nil), cfg.BuildFlags...),
+	}
+	if err := writeJSONAtomic(binaryProvenancePath(absoluteOutputPath), &provenance); err != nil {
+		return fmt.Errorf("write binary provenance: %w", err)
 	}
 
 	return nil
 }
 
-func (c *Compiler) toolchainEnv(baseDir string, target target) (map[string]string, func(), error) {
+type compilerIdentity struct {
+	Name    string
+	Version string
+}
+
+func (c *Compiler) toolchainEnv(ctx context.Context, baseDir string, target target) (map[string]string, compilerIdentity, func(), error) {
 	env := map[string]string{
 		"GOOS":        target.GOOS,
 		"GOARCH":      target.Arch,
 		"CGO_ENABLED": "1",
 	}
 
+	if target.Compiler != "" {
+		cc, err := c.lookup.LookPath(target.Compiler)
+		if err != nil {
+			return nil, compilerIdentity{}, nil, fmt.Errorf("configured compiler %q not found: %w", target.Compiler, err)
+		}
+		env["CC"] = cc
+		if target.CXX != "" {
+			cxx, err := c.lookup.LookPath(target.CXX)
+			if err != nil {
+				return nil, compilerIdentity{}, nil, fmt.Errorf("configured C++ compiler %q not found: %w", target.CXX, err)
+			}
+			env["CXX"] = cxx
+		}
+		identity, err := c.measureCompiler(ctx, cc, target.CompilerVersion)
+		return env, identity, func() {}, err
+	}
+
 	if target.GOOS == runtime.GOOS && target.Arch == runtime.GOARCH {
-		return env, func() {}, nil
+		cc := "cc"
+		if found, err := c.lookup.LookPath("cc"); err == nil {
+			cc = found
+		}
+		env["CC"] = cc
+		identity, err := c.measureCompiler(ctx, cc, target.CompilerVersion)
+		return env, identity, func() {}, err
 	}
 
 	if cc, cxx, ok := c.findCrossCompiler(target); ok {
@@ -107,17 +165,18 @@ func (c *Compiler) toolchainEnv(baseDir string, target target) (map[string]strin
 		if cxx != "" {
 			env["CXX"] = cxx
 		}
-		return env, func() {}, nil
+		identity, err := c.measureCompiler(ctx, cc, target.CompilerVersion)
+		return env, identity, func() {}, err
 	}
 
 	zigPath, err := c.lookup.LookPath("zig")
 	if err != nil {
-		return nil, nil, fmt.Errorf("no compiler toolchain available for %s/%s; install zig or a target-specific cross-compiler", target.Platform, target.Arch)
+		return nil, compilerIdentity{}, nil, fmt.Errorf("no compiler toolchain available for %s/%s; install zig or a target-specific cross-compiler", target.Platform, target.Arch)
 	}
 
 	tempDir, err := os.MkdirTemp(baseDir, "zig-toolchain-")
 	if err != nil {
-		return nil, nil, fmt.Errorf("create zig toolchain wrappers: %w", err)
+		return nil, compilerIdentity{}, nil, fmt.Errorf("create zig toolchain wrappers: %w", err)
 	}
 
 	ccWrapper := filepath.Join(tempDir, "cc-wrapper")
@@ -126,19 +185,36 @@ func (c *Compiler) toolchainEnv(baseDir string, target target) (map[string]strin
 
 	if err := writeWrapper(ccWrapper, zigPath, "cc", zigTarget); err != nil {
 		_ = os.RemoveAll(tempDir)
-		return nil, nil, err
+		return nil, compilerIdentity{}, nil, err
 	}
 	if err := writeWrapper(cxxWrapper, zigPath, "c++", zigTarget); err != nil {
 		_ = os.RemoveAll(tempDir)
-		return nil, nil, err
+		return nil, compilerIdentity{}, nil, err
 	}
 
 	env["CC"] = ccWrapper
 	env["CXX"] = cxxWrapper
 
-	return env, func() {
+	identity, err := c.measureCompiler(ctx, zigPath, target.CompilerVersion)
+	if err != nil {
+		_ = os.RemoveAll(tempDir)
+		return nil, compilerIdentity{}, nil, err
+	}
+	return env, identity, func() {
 		_ = os.RemoveAll(tempDir)
 	}, nil
+}
+
+func (c *Compiler) measureCompiler(ctx context.Context, executable, expectedVersion string) (compilerIdentity, error) {
+	output, err := c.runner.Output(ctx, _jsii.Command{Name: executable, Args: []string{"--version"}})
+	if err != nil {
+		return compilerIdentity{}, fmt.Errorf("measure compiler version: %w", err)
+	}
+	firstLine, _, _ := strings.Cut(strings.TrimSpace(output), "\n")
+	if expectedVersion != "" && !strings.Contains(firstLine, expectedVersion) {
+		return compilerIdentity{}, fmt.Errorf("compiler version mismatch: configured %s, invoked %q", expectedVersion, firstLine)
+	}
+	return compilerIdentity{Name: filepath.Base(executable), Version: firstLine}, nil
 }
 
 func (c *Compiler) findCrossCompiler(target target) (string, string, bool) {

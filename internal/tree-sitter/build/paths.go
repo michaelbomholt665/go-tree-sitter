@@ -10,10 +10,14 @@ import (
 )
 
 type target struct {
-	GOOS     string
-	Platform string
-	Arch     string
-	Ext      string
+	GOOS            string
+	Platform        string
+	Arch            string
+	Ext             string
+	Triple          string
+	Compiler        string
+	CXX             string
+	CompilerVersion string
 }
 
 var supportedTargets = map[string]map[string]struct{}{
@@ -74,7 +78,29 @@ func resolveConfiguredTarget(cfg *_jsii.Config, goos, arch string) (target, erro
 	if err != nil {
 		return target{}, fmt.Errorf("targets[%q]: %w", cfg.OSTarget, err)
 	}
+	resolved.Triple = configuredTarget.Triple
+	resolved.Compiler = configuredTarget.Compiler
+	resolved.CXX = configuredTarget.CXX
+	resolved.CompilerVersion = configuredTarget.CompilerVersion
 	return resolved, nil
+}
+
+func targetTriple(t target) string {
+	if t.Triple != "" {
+		return t.Triple
+	}
+	switch t.GOOS + "/" + t.Arch {
+	case "linux/amd64":
+		return "x86_64-linux-gnu"
+	case "windows/amd64":
+		return "x86_64-windows-gnu"
+	case "darwin/amd64":
+		return "x86_64-apple-darwin"
+	case "darwin/arm64":
+		return "aarch64-apple-darwin"
+	default:
+		return t.GOOS + "-" + t.Arch
+	}
 }
 
 func normalizeGOOS(goos string) string {

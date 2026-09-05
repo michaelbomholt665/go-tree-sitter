@@ -35,11 +35,10 @@ type CompileRequest struct {
 }
 
 type MoveRequest struct {
-	Language   string
-	Mode       MoveMode
-	Clean      bool
-	NoManifest bool
-	Force      bool
+	Language string
+	Mode     MoveMode
+	Clean    bool
+	Force    bool
 }
 
 type Builder interface {
@@ -199,7 +198,6 @@ func (a *App) runMove(ctx context.Context, args []string) error {
 	scmMode := fs.Bool("scm", false, "Move binaries and queries/ only.")
 	bothMode := fs.Bool("both", false, "Move binaries, node-types.json, and queries/.")
 	clean := fs.Bool("clean", true, "Clean the build directory for each successfully moved language.")
-	noManifest := fs.Bool("no-manifest", false, "Skip manifest.json generation.")
 	force := fs.Bool("force", false, "Overwrite existing output files.")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -219,11 +217,10 @@ func (a *App) runMove(ctx context.Context, args []string) error {
 	}
 
 	return a.mover.Move(ctx, cfg, MoveRequest{
-		Language:   *language,
-		Mode:       mode,
-		Clean:      *clean,
-		NoManifest: *noManifest,
-		Force:      *force,
+		Language: *language,
+		Mode:     mode,
+		Clean:    *clean,
+		Force:    *force,
 	})
 }
 
@@ -330,6 +327,7 @@ func (c Command) String() string {
 
 type CommandRunner interface {
 	Run(context.Context, Command) error
+	Output(context.Context, Command) (string, error)
 }
 
 type ExecRunner struct {
@@ -358,13 +356,37 @@ func (r *ExecRunner) Run(ctx context.Context, cmd Command) error {
 	execCmd.Stderr = io.MultiWriter(r.stderr, &stderr)
 
 	if err := execCmd.Run(); err != nil {
+		outStr := strings.TrimSpace(stdout.String())
+		errStr := strings.TrimSpace(stderr.String())
+		var combined string
+		switch {
+		case outStr != "" && errStr != "":
+			combined = outStr + "\n" + errStr
+		case outStr != "":
+			combined = outStr
+		default:
+			combined = errStr
+		}
 		return &CommandError{
 			Command: cmd,
-			Output:  strings.TrimSpace(stdout.String() + "\n" + stderr.String()),
+			Output:  combined,
 			Err:     err,
 		}
 	}
 	return nil
+}
+
+func (r *ExecRunner) Output(ctx context.Context, cmd Command) (string, error) {
+	execCmd := exec.CommandContext(ctx, cmd.Name, cmd.Args...)
+	execCmd.Dir = cmd.Dir
+	execCmd.Env = mergeEnv(os.Environ(), cmd.Env)
+
+	output, err := execCmd.CombinedOutput()
+	trimmed := strings.TrimSpace(string(output))
+	if err != nil {
+		return "", &CommandError{Command: cmd, Output: trimmed, Err: err}
+	}
+	return trimmed, nil
 }
 
 type CommandError struct {

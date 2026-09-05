@@ -17,7 +17,7 @@ func TestLoadConfigAppliesDefaults(t *testing.T) {
 	content := `
 version: "1.0"
 abi_versions:
-  "0.25.0": { min: 13, max: 14 }
+  ">=0.25": { min: 13, max: 15 }
 languages:
   - name: "python"
     version: "v0.25.0"
@@ -67,7 +67,7 @@ func TestLoadConfigRejectsDuplicateLanguages(t *testing.T) {
 version: "1.0"
 build_dir: "build"
 abi_versions:
-  "0.25.0": { min: 13, max: 14 }
+  ">=0.25": { min: 13, max: 15 }
 languages:
   - name: "python"
     version: "v0.25.0"
@@ -108,7 +108,7 @@ targets:
     os: "windows"
     arch: "amd64"
 abi_versions:
-  "0.25.0": { min: 13, max: 14 }
+  ">=0.25": { min: 13, max: 15 }
 languages:
   - name: "python"
     version: "v0.25.0"

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -16,18 +17,25 @@ import (
 var languageNamePattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
 type Config struct {
-	Version     string                 `yaml:"version"`
-	BuildDir    string                 `yaml:"build_dir"`
-	OSTarget    string                 `yaml:"OS_TARGET"`
-	Targets     map[string]BuildTarget `yaml:"targets"`
-	ABIVersions map[string]ABIRange    `yaml:"abi_versions"`
-	Languages   []Language             `yaml:"languages"`
-	Output      Output                 `yaml:"output"`
+	Version              string                 `yaml:"version"`
+	BuildDir             string                 `yaml:"build_dir"`
+	TreeSitterCLIVersion string                 `yaml:"tree_sitter_cli_version"`
+	GenerateABI          int                    `yaml:"generate_abi"`
+	BuildFlags           []string               `yaml:"build_flags"`
+	OSTarget             string                 `yaml:"OS_TARGET"`
+	Targets              map[string]BuildTarget `yaml:"targets"`
+	ABIVersions          map[string]ABIRange    `yaml:"abi_versions,omitempty"` // Deprecated: never used for artifact ABI metadata.
+	Languages            []Language             `yaml:"languages"`
+	Output               Output                 `yaml:"output"`
 }
 
 type BuildTarget struct {
-	OS   string `yaml:"os"`
-	Arch string `yaml:"arch"`
+	OS              string `yaml:"os"`
+	Arch            string `yaml:"arch"`
+	Triple          string `yaml:"triple"`
+	Compiler        string `yaml:"compiler"`
+	CXX             string `yaml:"cxx"`
+	CompilerVersion string `yaml:"compiler_version"`
 }
 
 type ABIRange struct {
@@ -37,10 +45,14 @@ type ABIRange struct {
 
 type Language struct {
 	Name              string `yaml:"name"`
+	Grammar           string `yaml:"grammar"`
+	Constructor       string `yaml:"constructor"`
 	Version           string `yaml:"version"`
-	TreeSitterVersion string `yaml:"tree_sitter_version"`
+	TreeSitterVersion string `yaml:"tree_sitter_version,omitempty"` // Deprecated compatibility input; never emitted as measured provenance.
 	Repository        string `yaml:"repository"`
+	Revision          string `yaml:"revision"`
 	SourceSubdir      string `yaml:"source_subdir"`
+	Sample            string `yaml:"sample"`
 	Note              string `yaml:"note,omitempty"`
 }
 
@@ -81,15 +93,20 @@ func (c *Config) Validate() error {
 	if err := c.validateRequiredFields(); err != nil {
 		return err
 	}
-	if err := c.validateABIVersions(); err != nil {
-		return err
-	}
 	return c.validateLanguages()
 }
 
 func (c *Config) validateRequiredFields() error {
 	if strings.TrimSpace(c.Version) == "" {
 		return errors.New("version is required")
+	}
+	if c.Version == "2.0" {
+		if strings.TrimSpace(c.TreeSitterCLIVersion) == "" {
+			return errors.New("tree_sitter_cli_version is required for config version 2.0")
+		}
+		if c.GenerateABI <= 0 {
+			return errors.New("generate_abi must explicitly select a positive ABI for config version 2.0")
+		}
 	}
 
 	c.BuildDir = cleanConfigPath(c.BuildDir)
@@ -140,12 +157,19 @@ func (c *Config) validateTargets() error {
 		}
 		target.OS = strings.TrimSpace(target.OS)
 		target.Arch = strings.TrimSpace(target.Arch)
+		target.Triple = strings.TrimSpace(target.Triple)
+		target.Compiler = strings.TrimSpace(target.Compiler)
+		target.CXX = strings.TrimSpace(target.CXX)
+		target.CompilerVersion = strings.TrimSpace(target.CompilerVersion)
 
 		if target.OS == "" {
 			return fmt.Errorf("targets[%q].os is required", name)
 		}
 		if target.Arch == "" {
 			return fmt.Errorf("targets[%q].arch is required", name)
+		}
+		if c.Version == "2.0" && (target.Triple == "" || target.Compiler == "" || target.CompilerVersion == "") {
+			return fmt.Errorf("targets[%q] must pin triple, compiler, and compiler_version", name)
 		}
 		c.Targets[name] = target
 	}
@@ -196,15 +220,18 @@ func (c *Config) validateMoveModeConfig() error {
 }
 
 func (c *Config) validateABIVersions() error {
-	for version, abi := range c.ABIVersions {
-		if strings.TrimSpace(version) == "" {
+	for rangeExpr, abi := range c.ABIVersions {
+		if strings.TrimSpace(rangeExpr) == "" {
 			return errors.New("abi_versions keys must not be empty")
 		}
+		if _, err := parseRangeExpression(rangeExpr); err != nil {
+			return fmt.Errorf("abi_versions[%q]: invalid range expression: %w", rangeExpr, err)
+		}
 		if abi.Min <= 0 || abi.Max <= 0 {
-			return fmt.Errorf("abi_versions[%q] must use positive min/max versions", version)
+			return fmt.Errorf("abi_versions[%q] must use positive min/max versions", rangeExpr)
 		}
 		if abi.Min > abi.Max {
-			return fmt.Errorf("abi_versions[%q] min must be <= max", version)
+			return fmt.Errorf("abi_versions[%q] min must be <= max", rangeExpr)
 		}
 	}
 
@@ -226,9 +253,18 @@ func (c *Config) validateLanguages() error {
 
 func normalizeLanguage(lang *Language) {
 	lang.Name = strings.TrimSpace(lang.Name)
+	lang.Grammar = strings.TrimSpace(lang.Grammar)
+	if lang.Grammar == "" {
+		lang.Grammar = strings.NewReplacer(".", "", "-", "_").Replace(lang.Name)
+	}
+	lang.Constructor = strings.TrimSpace(lang.Constructor)
+	if lang.Constructor == "" {
+		lang.Constructor = "tree_sitter_" + lang.Grammar
+	}
 	lang.Version = strings.TrimSpace(lang.Version)
 	lang.TreeSitterVersion = strings.TrimSpace(lang.TreeSitterVersion)
 	lang.Repository = strings.TrimSpace(lang.Repository)
+	lang.Revision = strings.TrimSpace(lang.Revision)
 	lang.SourceSubdir = normalizeSubdir(lang.SourceSubdir)
 }
 
@@ -243,6 +279,12 @@ func (c *Config) validateLanguage(index int, lang *Language, seen map[string]str
 		return fmt.Errorf("duplicate language name %q", lang.Name)
 	}
 	seen[lang.Name] = struct{}{}
+	if !regexp.MustCompile(`^[A-Za-z0-9_]+$`).MatchString(lang.Grammar) {
+		return fmt.Errorf("languages[%d].grammar %q must match an exported constructor suffix", index, lang.Grammar)
+	}
+	if lang.Constructor != "tree_sitter_"+lang.Grammar {
+		return fmt.Errorf("languages[%d].constructor %q must equal tree_sitter_<grammar> (%q)", index, lang.Constructor, "tree_sitter_"+lang.Grammar)
+	}
 
 	if lang.Version == "" {
 		return fmt.Errorf("languages[%d].version is required", index)
@@ -256,11 +298,16 @@ func (c *Config) validateLanguage(index int, lang *Language, seen map[string]str
 	if lang.SourceSubdir != "" && (filepath.IsAbs(lang.SourceSubdir) || strings.HasPrefix(lang.SourceSubdir, "..")) {
 		return fmt.Errorf("languages[%d].source_subdir must stay within the cloned repository", index)
 	}
-	if lang.TreeSitterVersion == "" {
-		return fmt.Errorf("languages[%d].tree_sitter_version is required", index)
+	if lang.Revision != "" && !regexp.MustCompile(`^[0-9a-fA-F]{40}$`).MatchString(lang.Revision) {
+		return fmt.Errorf("languages[%d].revision must be a full 40-character commit", index)
 	}
-	if _, ok := c.ABIVersions[lang.TreeSitterVersion]; !ok {
-		return fmt.Errorf("languages[%d].tree_sitter_version %q has no ABI mapping", index, lang.TreeSitterVersion)
+	if c.Version == "2.0" {
+		if lang.Revision == "" {
+			return fmt.Errorf("languages[%d].revision is required for config version 2.0", index)
+		}
+		if strings.TrimSpace(lang.Sample) == "" {
+			return fmt.Errorf("languages[%d].sample is required for config version 2.0", index)
+		}
 	}
 	return nil
 }
@@ -284,11 +331,132 @@ func (c *Config) ResolveLanguages(name string) ([]Language, error) {
 }
 
 func (c *Config) ABIFor(version string) (ABIRange, error) {
-	abi, ok := c.ABIVersions[version]
-	if !ok {
-		return ABIRange{}, fmt.Errorf("tree-sitter version %q has no ABI mapping", version)
+	ver, err := parseSemVersion(version)
+	if err != nil {
+		return ABIRange{}, fmt.Errorf("invalid tree-sitter version %q: %w", version, err)
 	}
-	return abi, nil
+
+	for rangeExpr, abi := range c.ABIVersions {
+		constraints, err := parseRangeExpression(rangeExpr)
+		if err != nil {
+			continue // already validated at load time
+		}
+		matched := true
+		for _, constraint := range constraints {
+			if !constraint.matches(ver.parts) {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return abi, nil
+		}
+	}
+
+	return ABIRange{}, fmt.Errorf("tree-sitter version %q has no ABI mapping", version)
+}
+
+// -- semver range helpers --
+
+// semVersion holds a parsed major.minor[.patch] version.
+type semVersion struct {
+	parts [3]int
+	n     int // number of significant parts (2 or 3)
+}
+
+// parseSemVersion parses a "major.minor" or "major.minor.patch" string.
+func parseSemVersion(s string) (semVersion, error) {
+	s = strings.TrimSpace(s)
+	fields := strings.Split(s, ".")
+	if len(fields) < 2 || len(fields) > 3 {
+		return semVersion{}, fmt.Errorf("version %q must have 2 or 3 dot-separated parts", s)
+	}
+	var sv semVersion
+	sv.n = len(fields)
+	for i, f := range fields {
+		n, err := strconv.Atoi(strings.TrimSpace(f))
+		if err != nil || n < 0 {
+			return semVersion{}, fmt.Errorf("version %q: part %q is not a non-negative integer", s, f)
+		}
+		sv.parts[i] = n
+	}
+	return sv, nil
+}
+
+// compareToConstraint compares ver against the constraint version using only the
+// constraint's significant parts (2 or 3). Returns -1, 0, or 1 (ver vs constraint).
+func (sv semVersion) compareToConstraint(ver [3]int) int {
+	for i := 0; i < sv.n; i++ {
+		switch {
+		case ver[i] < sv.parts[i]:
+			return -1
+		case ver[i] > sv.parts[i]:
+			return 1
+		}
+	}
+	return 0
+}
+
+type versionConstraint struct {
+	op  string // one of: >=, <=, >, <, =
+	ver semVersion
+}
+
+// matches reports whether ver satisfies this constraint.
+func (vc versionConstraint) matches(ver [3]int) bool {
+	cmp := vc.ver.compareToConstraint(ver)
+	switch vc.op {
+	case ">=":
+		return cmp >= 0
+	case "<=":
+		return cmp <= 0
+	case ">":
+		return cmp > 0
+	case "<":
+		return cmp < 0
+	case "=":
+		return cmp == 0
+	}
+	return false
+}
+
+// parseVersionConstraint parses a single constraint like ">=0.25" or "<=0.24".
+func parseVersionConstraint(s string) (versionConstraint, error) {
+	s = strings.TrimSpace(s)
+	var op, verStr string
+	for _, prefix := range []string{">=", "<=", ">", "<", "="} {
+		if strings.HasPrefix(s, prefix) {
+			op = prefix
+			verStr = strings.TrimSpace(s[len(prefix):])
+			break
+		}
+	}
+	if op == "" {
+		return versionConstraint{}, fmt.Errorf("constraint %q must start with an operator (>=, <=, >, <, =)", s)
+	}
+	ver, err := parseSemVersion(verStr)
+	if err != nil {
+		return versionConstraint{}, fmt.Errorf("constraint %q: %w", s, err)
+	}
+	return versionConstraint{op: op, ver: ver}, nil
+}
+
+// parseRangeExpression parses a comma-separated list of constraints,
+// e.g. ">=0.20.3, <=0.24" or ">=0.25".
+func parseRangeExpression(expr string) ([]versionConstraint, error) {
+	parts := strings.Split(expr, ",")
+	constraints := make([]versionConstraint, 0, len(parts))
+	for _, part := range parts {
+		c, err := parseVersionConstraint(strings.TrimSpace(part))
+		if err != nil {
+			return nil, fmt.Errorf("range %q: %w", expr, err)
+		}
+		constraints = append(constraints, c)
+	}
+	if len(constraints) == 0 {
+		return nil, fmt.Errorf("range %q: no constraints specified", expr)
+	}
+	return constraints, nil
 }
 
 func applyDefaults(cfg *Config) {

@@ -1,7 +1,8 @@
 TREE_SITTER ?= tree-sitter
+TREE_SITTER_VERSION ?= 0.26.8
 NPM ?= npm
 
-.PHONY: help build grammar-build compile move move-safe test clean licenses fmt lint vet tool-help check-tree-sitter install-tree-sitter-cli
+.PHONY: help build grammar-build compile move release test clean licenses fmt lint vet tool-help check-tree-sitter install-tree-sitter-cli
 
 help:
 	@echo "go-tree-sitter - Tree-Sitter grammar builder"
@@ -11,7 +12,7 @@ help:
 	@echo "  make grammar-build  - Clone/generate configured grammar sources"
 	@echo "  make compile        - Compile generated grammars for the configured target"
 	@echo "  make move           - Move compiled grammar artifacts into the output directory, overwriting existing files"
-	@echo "  make move-safe      - Move compiled grammar artifacts without overwriting existing files"
+	@echo "  make release        - Run the pinned generate, compile, validate, and atomic publish pipeline"
 	@echo "  make check-tree-sitter - Check for the external tree-sitter CLI"
 	@echo "  make install-tree-sitter-cli - Install the external tree-sitter CLI with npm"
 	@echo "  make test           - Run tests"
@@ -41,7 +42,7 @@ check-tree-sitter:
 	}
 
 install-tree-sitter-cli:
-	$(NPM) install -g tree-sitter-cli
+	$(NPM) install -g tree-sitter-cli@$(TREE_SITTER_VERSION)
 
 grammar-build: check-tree-sitter
 	go run ./cmd/tree-sitter build
@@ -52,8 +53,10 @@ compile: check-tree-sitter
 move:
 	go run ./cmd/tree-sitter move --force
 
-move-safe:
-	go run ./cmd/tree-sitter move
+release: check-tree-sitter
+	go run ./cmd/tree-sitter build --force
+	go run ./cmd/tree-sitter compile
+	go run ./cmd/tree-sitter move --both --force
 
 test:
 	go test -v -race -coverprofile=coverage.out ./...

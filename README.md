@@ -1,172 +1,62 @@
 # go-tree-sitter
 
-A Go-based Tree-Sitter grammar builder CLI that clones grammar repositories, generates parser sources, compiles shared libraries, and organizes runtime artifacts.
-
-## What it does
-
-The CLI implements the full workflow described in `docs/planning/design/001-tree-sitter-design.md`:
-
-1. `build` clones configured grammar repositories and runs `tree-sitter generate`
-2. `compile` builds platform-specific shared libraries with predictable filenames
-3. `move` copies binaries and selected artifacts into `data/tree-sitter/grammar/<language>/`, writes `manifest.json`, and cleans `build/`
-
-Supported grammar coverage in the default config:
-
-- Core languages: Python, Go, TypeScript, JavaScript
-- JVM languages: Java
-- Frontend stack: HTML, CSS, TSX
-- Config/data: JSON, YAML, TOML
-- Platform/dependency files: `go.mod`, `go.sum`
-- Data/query layers: SQL, Cypher
-- RPC/protocols: Proto
+A reproducible Tree-sitter grammar builder. It pins grammar revisions, the Tree-sitter generator, compiler targets, and flags; then validates metadata against the final native libraries before publishing the complete catalog atomically.
 
 ## Requirements
 
 - Go 1.26+
-- `tree-sitter` CLI available on `PATH`
-- A C/C++ toolchain for the target platform
-- For cross-compilation: Zig or target-specific cross compilers
+- Tree-sitter CLI 0.26.8 (the configured version is checked from `tree-sitter --version`)
+- The compiler and version selected by `tree-sitter-config.yaml`
+- Network access for the initial pinned grammar checkouts and locked npm dependencies
 
-## Quick start
+Install the pinned CLI with `make install-tree-sitter-cli`.
 
-```bash
-# show available workflow commands
-make help
-
-# generate grammar sources
-make grammar-build
-
-# compile for OS_TARGET
-make compile
-
-# move binaries + node-types + queries and generate manifests
-make move
-```
-
-The default configuration lives in [`tree-sitter-config.yaml`](./tree-sitter-config.yaml). `OS_TARGET` selects one entry from `targets`; change it to decide which platform the default `build`, `compile`, and `move` workflow uses.
-
-```yaml
-OS_TARGET: "linux"
-
-targets:
-  linux:
-    os: "linux"
-    arch: "amd64"
-  windows:
-    os: "windows"
-    arch: "amd64"
-  macos-amd64:
-    os: "macos"
-    arch: "amd64"
-  macos-arm64:
-    os: "macos"
-    arch: "arm64"
-```
-
-The output paths are also configurable:
-
-```yaml
-output:
-  grammar_base: "data/tree-sitter/grammar"
-  grammar_build: "build/{lang}/{arch}"
-  grammar_compile: "build/{lang}/{arch}"
-```
-
-## Output layout
-
-The move step writes organized artifacts here:
-
-```text
-data/tree-sitter/grammar/
-└── <language>/
-    ├── manifest.json
-    ├── <language>-<version>-<platform>-<arch>.<so|dylib|dll>
-    ├── node-types.json
-    └── queries/
-```
-
-`manifest.json` includes:
-
-- grammar name and version
-- tree-sitter parser version
-- ABI min/max compatibility
-- compiled timestamp
-- per-binary SHA-256 checksums
-- artifact availability flags
-
-## Commands
-
-### Makefile Workflow
+## Release workflow
 
 ```bash
-make build          # build Go packages and CLI
-make grammar-build  # clone grammar repos and run tree-sitter generate
-make compile        # compile generated grammars for OS_TARGET
-make move           # move artifacts, overwriting existing output files
-make move-safe      # move artifacts without overwriting existing output files
+make release
 ```
 
-`make grammar-build` and `make compile` require the external `tree-sitter` CLI. Install it with:
+This runs the three explicit phases:
 
 ```bash
-make install-tree-sitter-cli
+go run ./cmd/tree-sitter build --force
+go run ./cmd/tree-sitter compile
+go run ./cmd/tree-sitter move --both --force
 ```
 
-### CLI Build
+`build` checks out each full commit, invokes `tree-sitter generate --abi 15`, and records the invoked generator version and generated `node-types.json` hash. `compile` records the invoked compiler identity, target triple, flags, and source provenance. `move` stages the complete catalog, loads every final native library, measures its ABI, validates parsing and queries, computes checksums from the final bytes, and swaps the release directory only after every grammar passes.
 
-```bash
-go run ./cmd/tree-sitter build [--config path] [--language name] [--force]
-```
+Manifest-only regeneration and publication are intentionally unsupported. A manifest cannot be made authoritative without loading the exact native artifact it describes.
 
-### CLI Compile
+## Validation
 
-```bash
-go run ./cmd/tree-sitter compile [--config path] [--language name] [--os linux|windows|macos] [--arch amd64|arm64]
-```
+The validation runtime is `github.com/tree-sitter/go-tree-sitter v0.25.0`. Compatibility uses that binding's `MIN_COMPATIBLE_LANGUAGE_VERSION` and `LANGUAGE_VERSION` constants (currently 13 and 15). Those constants are validation policy, not binary metadata.
 
-When `--os` or `--arch` is provided, the command compiles one target and uses the flag values as an override. When both are omitted, `OS_TARGET` selects the configured target. If `OS_TARGET` is omitted, the current platform is used.
+For each native artifact the validator:
 
-### CLI Move
+- checks its file format, architecture, and sole expected `tree_sitter_<grammar>` export;
+- keeps the dynamic library loaded while calling its constructor and `Language.AbiVersion()`;
+- assigns the language through `Parser.SetLanguage`, parses the configured sample, and rejects error trees;
+- validates `node-types.json` against generation provenance and compiles every shipped query with located errors;
+- verifies manifest ABI invariants, provenance, and final-byte SHA-256 values.
 
-```bash
-go run ./cmd/tree-sitter move [--config path] [--language name] [--json|--scm|--both] [--clean] [--no-manifest] [--force]
-```
+Cross-platform binaries must run this validation on their target platform. A Linux validation job will reject Windows or macOS binaries rather than infer their ABI.
 
-## Project structure
+## Manifest schema
 
-```text
-cmd/tree-sitter/                 CLI entry point
-internal/tree-sitter/           config loading, command dispatch, command runner
-internal/tree-sitter/build/     build / compile / move / clean / manifest logic
-internal/tests/                 package-level unit tests
-tree-sitter-config.yaml         default 15-grammar configuration
-data/tree-sitter/grammar/       final artifact root
-build/                          intermediate checkout and compilation root
-```
+Published manifests use schema version 2. See [docs/manifest-schema-v2.md](docs/manifest-schema-v2.md) for the field contract and migration notes.
 
 ## Development
 
 ```bash
-make help
-make build
-make grammar-build
-make compile
-make move
-make test
 make fmt
+make test
 make vet
 ```
 
-## Notes
-
-- `github.com/tree-sitter/go-tree-sitter` is the runtime parser library, **not** the CLI. Installing the Go module does not install the `tree-sitter` binary.
-- The builder commands still depend on the external `tree-sitter` CLI being available on `PATH`.
-- The YAML config now carries the universal move modes and default explicitly under `output.default_move_mode` / `output.supported_move_modes`.
-- Generated parser C files and headers are build artifacts. They are produced under `build/` by `tree-sitter generate` and are not checked in.
-- The compiler emits real shared library extensions (`.so`, `.dylib`, `.dll`) instead of executable names because `tree-sitter build` produces shared libraries.
-- TSX and TypeScript are both sourced from the `tree-sitter-typescript` repository via per-language `source_subdir` configuration.
-- The repository keeps generated grammar outputs out of source control via `.gitignore`.
+The configuration and source revisions are in `tree-sitter-config.yaml`; implementation is under `internal/tree-sitter/`.
 
 ## License
 
-MIT. See [LICENSE](./LICENSE).
+MIT. See [LICENSE](LICENSE).
