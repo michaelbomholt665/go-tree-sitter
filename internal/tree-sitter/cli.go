@@ -197,6 +197,7 @@ Use --quiet to silence all non-error output.`,
 		a.moveCmd(&configPath, &verbose, makeReporter),
 		a.cleanCmd(&configPath, &verbose, makeReporter),
 		a.compactCmd(&configPath, &verbose, makeReporter),
+		a.wizardCmd(&configPath, &verbose, makeReporter),
 		&cobra.Command{
 			Use:   "version",
 			Short: "Print the version of ts-build",
@@ -478,7 +479,126 @@ func (a *App) compactCmd(configPath *string, verbose *bool, makeReporter func() 
 	return cmd
 }
 
+// ─── wizard subcommand ────────────────────────────────────────────────────────
+
+func (a *App) wizardCmd(configPath *string, verbose *bool, makeReporter func() Reporter) *cobra.Command {
+	return &cobra.Command{
+		Use:   "wizard",
+		Short: "Interactive guided build wizard",
+		Long:  "Launch an interactive step-by-step wizard to configure and run the build pipeline.",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cfg, err := a.load(*configPath)
+			if err != nil {
+				return err
+			}
+
+			result, ok, err := RunWizard(cfg.Languages)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return nil // user aborted
+			}
+
+			ctx := cmd.Context()
+			reporter := makeReporter()
+			_ = reporter // available for future use
+
+			// Resolve grammar name: empty string means "all" to every Request type.
+			// When multiple grammars are selected we run them one at a time so the
+			// user gets per-language progress output identical to the normal CLI.
+			grammarNames := result.Grammars
+			if len(grammarNames) == 0 {
+				grammarNames = []string{""} // single pass → all languages
+			}
+
+			for _, lang := range grammarNames {
+				// ── Phase 1: build ────────────────────────────────────────
+				if result.Pipeline == PipelineBuildOnly ||
+					result.Pipeline == PipelineBuildCompile ||
+					result.Pipeline == PipelineBuildCompilePublish {
+
+					if a.builder == nil {
+						return errors.New("build command is not configured")
+					}
+					if err := RequireTools(a.lookup, "git", "tree-sitter"); err != nil {
+						return err
+					}
+					if err := a.builder.Build(ctx, cfg, BuildRequest{
+						Language: lang,
+						Force:    result.Force,
+						Prune:    result.Prune,
+					}); err != nil {
+						return err
+					}
+				}
+
+				// ── Phase 2: compile ──────────────────────────────────────
+				if result.Pipeline == PipelineCompileOnly ||
+					result.Pipeline == PipelineBuildCompile ||
+					result.Pipeline == PipelineBuildCompilePublish {
+
+					if a.compiler == nil {
+						return errors.New("compile command is not configured")
+					}
+					if err := RequireTools(a.lookup, "tree-sitter"); err != nil {
+						return err
+					}
+					for _, platform := range result.Platforms {
+						if platform.OS == "wasm" {
+							if err := a.compiler.Compile(ctx, cfg, CompileRequest{
+								Language:  lang,
+								BuildWasm: true,
+							}); err != nil {
+								return err
+							}
+						} else {
+							if err := a.compiler.Compile(ctx, cfg, CompileRequest{
+								Language: lang,
+								OS:       platform.OS,
+								Arch:     platform.Arch,
+							}); err != nil {
+								return err
+							}
+						}
+					}
+				}
+
+				// ── Phase 3: move / publish ───────────────────────────────
+				if result.Pipeline == PipelinePublishOnly ||
+					result.Pipeline == PipelineBuildCompilePublish {
+
+					if a.mover == nil {
+						return errors.New("move command is not configured")
+					}
+					mode, err := ParseConfiguredMoveMode(cfg.Output.DefaultMoveMode)
+					if err != nil {
+						return err
+					}
+					if err := a.mover.Move(ctx, cfg, MoveRequest{
+						Language:         lang,
+						Mode:             mode,
+						Clean:            true,
+						Force:            result.Force,
+						GenerateManifest: result.GenerateManifest,
+						CopySCM:          result.CopySCM,
+						CopySource:       result.CopySource,
+						CopyJS:           result.CopyJS,
+						IncludeWasm:      result.IncludeWasm,
+						Compact:          result.Compact,
+					}); err != nil {
+						return err
+					}
+				}
+			}
+
+			return nil
+		},
+	}
+}
+
 // ─── completion subcommand ────────────────────────────────────────────────────
+
 
 func (a *App) completionCmd(root *cobra.Command) *cobra.Command {
 	return &cobra.Command{

@@ -47,9 +47,26 @@ Ensure the following tools are installed on your host machine:
 
 ## Quick Start
 
-### 1. Build, Compile, Compact, and Publish a Grammar
+### 1. Interactive Wizard (Recommended for Human Use)
 
-Run the complete pipeline for a single language (e.g., `python`) in one command:
+The easiest way to run the build pipeline is the interactive wizard. It guides you through every configuration choice step by step — no flags to memorise:
+
+```bash
+go run ./cmd/ts-build wizard
+```
+
+The wizard walks you through four steps:
+
+1. **Pipeline** — choose how far to run (build only, build+compile, full end-to-end, etc.)
+2. **Target Platforms** — select one or more of Linux, macOS arm64/amd64, Windows, or WebAssembly
+3. **Artifacts & Options** — toggle `manifest.json`, `.scm` query files, compact node types, C sources, `grammar.js`, WASM staging, force-overwrite, and build-cache pruning
+4. **Grammars** — pick any subset of the 38 configured languages (or select all)
+
+A compact summary is shown before anything runs, and you confirm or abort with a single keypress.
+
+### 2. One-liner Makefile Pipeline (Scripting / CI)
+
+Run the complete pipeline for a single language (e.g., `python`) non-interactively:
 
 ```bash
 make build-all LANG=python
@@ -63,7 +80,7 @@ This single command:
 5. Validates binary ABIs, query syntax, and AST schemas.
 6. Atomically updates [`data/tree-sitter/grammar/python/`](data/tree-sitter/grammar/python/) and wipes intermediate build caches.
 
-### 2. Parse Code in Go
+### 3. Parse Code in Go
 
 Once published, you can consume compiled grammars either via dynamic runtime loading or static CGo bindings:
 
@@ -101,6 +118,14 @@ func main() {
 ---
 
 ## Common Workflows
+
+### Interactive Wizard (Recommended for Human Use)
+
+```bash
+go run ./cmd/ts-build wizard
+```
+
+Guides you through pipeline mode, target platforms, artifact selection, and grammar choice interactively. Ideal for day-to-day local builds.
 
 ### The Step-by-Step CLI Pipeline (`ts-build`)
 
