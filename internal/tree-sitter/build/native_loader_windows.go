@@ -23,12 +23,13 @@ func openNativeLanguage(path, constructor string) (*nativeLibrary, unsafe.Pointe
 		_ = library.Close()
 		return nil, nil, fmt.Errorf("resolve constructor %q in %q: %w", constructor, path, err)
 	}
-	pointer, _, callErr := procedure.Call()
-	if pointer == 0 {
+	r1, _, callErr := procedure.Call()
+	if r1 == 0 {
 		_ = library.Close()
 		return nil, nil, fmt.Errorf("constructor %q in %q returned a null TSLanguage: %v", constructor, path, callErr)
 	}
-	return library, unsafe.Pointer(pointer), nil
+	ptr := *(*unsafe.Pointer)(unsafe.Pointer(&r1))
+	return library, ptr, nil
 }
 
 func (l *nativeLibrary) Close() error {
