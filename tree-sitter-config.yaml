@@ -10,7 +10,15 @@ build_dir: "build"
 # tree-sitter CLI version that must be installed and on PATH (npm install -g tree-sitter-cli).
 tree_sitter_cli_version: "0.26.8"
 
-# ABI version passed to `tree-sitter generate --abi`.
+# Supported ABI range for Tree-sitter parsers (13 to 15).
+# The Go runtime (github.com/tree-sitter/go-tree-sitter) supports ABIs 13 through 15.
+# ABI 15 is backward-compatible with ABI 14 and 13.
+abi_range:
+  min: 13
+  max: 15
+
+# Target ABI version passed to `tree-sitter generate --abi` (must fall within abi_range).
+# Can be overridden per-language with `generate_abi`.
 generate_abi: 15
 
 # C/C++ compiler flags applied when building shared libraries.
@@ -24,7 +32,7 @@ build_flags:
 
 # Set OS_TARGET to one of the keys under `targets` to pick a cross-compilation
 # target. This is the default target used by `make compile` and `make release`.
-# Override per-invocation with: go run ./cmd/tree-sitter compile --os linux --arch amd64
+# Override per-invocation with: go run ./cmd/ts-build compile --os linux --arch amd64
 OS_TARGET: "linux"
 
 # ──────────────────────────────────────────────────────────────────────────────

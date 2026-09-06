@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	_jsii "github.com/michaelbomholt665/go-tree-sitter/internal/tree-sitter"
 )
@@ -18,28 +19,49 @@ import (
 type Mover struct {
 	cleaner   *Cleaner
 	validator ArtifactValidator
-	stdout    io.Writer
-	stderr    io.Writer
+	reporter  _jsii.Reporter
 }
 
+// NewMover constructs a Mover.  The stdout and stderr writers are kept for
+// backward-compatibility; a TextReporter is derived from stdout.  Prefer
+// NewMoverWithReporter for new code.
 func NewMover(_ Clock, cleaner *Cleaner, stdout, stderr io.Writer) *Mover {
-	return NewMoverWithValidator(cleaner, NewNativeValidator(), stdout, stderr)
+	if stdout == nil {
+		stdout = io.Discard
+	}
+	return NewMoverWithValidatorAndReporter(
+		cleaner,
+		NewNativeValidator(),
+		_jsii.NewTextReporter(stdout, false),
+	)
 }
 
+// NewMoverWithValidator is the existing constructor preserved for test
+// compatibility.
 func NewMoverWithValidator(cleaner *Cleaner, validator ArtifactValidator, stdout, stderr io.Writer) *Mover {
+	if stdout == nil {
+		stdout = io.Discard
+	}
+	return NewMoverWithValidatorAndReporter(cleaner, validator, _jsii.NewTextReporter(stdout, false))
+}
+
+// NewMoverWithReporter constructs a Mover that reports progress via r.
+func NewMoverWithReporter(cleaner *Cleaner, r _jsii.Reporter) *Mover {
+	return NewMoverWithValidatorAndReporter(cleaner, NewNativeValidator(), r)
+}
+
+// NewMoverWithValidatorAndReporter is the fully-specified constructor.
+func NewMoverWithValidatorAndReporter(cleaner *Cleaner, validator ArtifactValidator, r _jsii.Reporter) *Mover {
 	if cleaner == nil {
 		cleaner = NewCleaner()
 	}
 	if validator == nil {
 		validator = NewNativeValidator()
 	}
-	if stdout == nil {
-		stdout = io.Discard
+	if r == nil {
+		r = _jsii.SilentReporter{}
 	}
-	if stderr == nil {
-		stderr = io.Discard
-	}
-	return &Mover{cleaner: cleaner, validator: validator, stdout: stdout, stderr: stderr}
+	return &Mover{cleaner: cleaner, validator: validator, reporter: r}
 }
 
 type stagedLanguage struct {
@@ -78,12 +100,15 @@ func (m *Mover) Move(ctx context.Context, cfg *_jsii.Config, req _jsii.MoveReque
 		return fmt.Errorf("inspect current release: %w", statErr)
 	}
 
+	start := time.Now()
 	staged := make(map[string]stagedLanguage, len(languages))
 	var preparationErrors []error
 	for _, lang := range languages {
+		m.reporter.Start("move", lang.Name)
 		prepared, err := m.stageLanguage(cfg, stage, lang, req)
 		if err != nil {
 			preparationErrors = append(preparationErrors, fmt.Errorf("stage %s: %w", lang.Name, err))
+			m.reporter.Failure("move", lang.Name, err, diagnosticsFrom(err))
 			continue
 		}
 		staged[lang.Name] = prepared
@@ -123,6 +148,12 @@ func (m *Mover) Move(ctx context.Context, cfg *_jsii.Config, req _jsii.MoveReque
 		return err
 	}
 
+	// Count total binaries across all languages.
+	totalBinaries := 0
+	for _, sl := range staged {
+		totalBinaries += len(sl.binaries)
+	}
+
 	var cleanupErrors []error
 	if req.Clean {
 		for _, lang := range languages {
@@ -131,7 +162,10 @@ func (m *Mover) Move(ctx context.Context, cfg *_jsii.Config, req _jsii.MoveReque
 			}
 		}
 	}
-	fmt.Fprintf(m.stdout, "published %d grammar(s) atomically to %s\n", len(languages), base)
+
+	detail := fmt.Sprintf("%d grammars, %d binaries", len(languages), totalBinaries)
+	m.reporter.Success("move", base, detail, time.Since(start))
+
 	return errors.Join(cleanupErrors...)
 }
 
@@ -280,6 +314,9 @@ func collectReleaseValidationItems(stage string, cfg *_jsii.Config, languages []
 						}
 					}
 				}
+			}
+			if genABI == 0 && lang.GenerateABI != nil && *lang.GenerateABI > 0 {
+				genABI = uint32(*lang.GenerateABI)
 			}
 			if genABI == 0 && cfg != nil && cfg.GenerateABI > 0 {
 				genABI = uint32(cfg.GenerateABI)

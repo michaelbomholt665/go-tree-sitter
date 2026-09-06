@@ -130,3 +130,91 @@ output:
 		t.Fatalf("expected missing OS_TARGET error, got %v", err)
 	}
 }
+
+func TestLoadConfigV2ValidatesABIRange(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "tree-sitter-config.yaml")
+	content := `
+version: "2.0"
+tree_sitter_cli_version: "0.26.8"
+abi_range:
+  min: 13
+  max: 15
+generate_abi: 15
+OS_TARGET: "linux"
+targets:
+  linux:
+    os: "linux"
+    arch: "amd64"
+    triple: "x86_64-linux-gnu"
+    compiler: "gcc"
+    compiler_version: "14.2.0"
+languages:
+  - name: "python"
+    version: "v0.25.0"
+    repository: "https://github.com/tree-sitter/tree-sitter-python.git"
+    revision: "293fdc02038ee2bf0e2e206711b69c90ac0d413f"
+    sample: "x = 1\n"
+    generate_abi: 14
+`
+	if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := ts.LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig returned error: %v", err)
+	}
+
+	if cfg.ABIRange == nil || cfg.ABIRange.Min != 13 || cfg.ABIRange.Max != 15 {
+		t.Fatalf("expected abi_range [13, 15], got %+v", cfg.ABIRange)
+	}
+	if cfg.GenerateABI != 15 {
+		t.Fatalf("expected generate_abi 15, got %d", cfg.GenerateABI)
+	}
+	if len(cfg.Languages) != 1 || cfg.Languages[0].GenerateABI == nil || *cfg.Languages[0].GenerateABI != 14 {
+		t.Fatalf("expected language generate_abi 14, got %+v", cfg.Languages[0].GenerateABI)
+	}
+}
+
+func TestLoadConfigV2RejectsInvalidGenerateABI(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "tree-sitter-config.yaml")
+	content := `
+version: "2.0"
+tree_sitter_cli_version: "0.26.8"
+abi_range:
+  min: 13
+  max: 15
+generate_abi: 16
+OS_TARGET: "linux"
+targets:
+  linux:
+    os: "linux"
+    arch: "amd64"
+    triple: "x86_64-linux-gnu"
+    compiler: "gcc"
+    compiler_version: "14.2.0"
+languages:
+  - name: "python"
+    version: "v0.25.0"
+    repository: "https://github.com/tree-sitter/tree-sitter-python.git"
+    revision: "293fdc02038ee2bf0e2e206711b69c90ac0d413f"
+    sample: "x = 1\n"
+`
+	if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	_, err := ts.LoadConfig(configPath)
+	if err == nil {
+		t.Fatalf("expected error for generate_abi outside abi_range")
+	}
+	if !strings.Contains(err.Error(), "must be within supported abi_range 13-15") {
+		t.Fatalf("unexpected error message: %v", err)
+	}
+}

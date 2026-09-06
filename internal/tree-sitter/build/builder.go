@@ -1,6 +1,7 @@
 package build
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,6 +12,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	_jsii "github.com/michaelbomholt665/go-tree-sitter/internal/tree-sitter"
 )
@@ -18,18 +20,29 @@ import (
 var pseudoVersionPattern = regexp.MustCompile(`^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?(?:-|\.)\d{14}-([0-9a-f]{12})$`)
 
 type Builder struct {
-	runner _jsii.CommandRunner
-	stdout io.Writer
+	runner   _jsii.CommandRunner
+	reporter _jsii.Reporter
 }
 
-func NewBuilder(runner _jsii.CommandRunner, stdout, _ io.Writer) *Builder {
+// NewBuilder constructs a Builder.  The stdout and stderr writers are kept for
+// backward-compatibility with existing call sites; a TextReporter is derived
+// from them automatically.  Prefer NewBuilderWithReporter for new code.
+func NewBuilder(runner _jsii.CommandRunner, stdout, stderr io.Writer) *Builder {
 	if stdout == nil {
 		stdout = io.Discard
 	}
 	return &Builder{
-		runner: runner,
-		stdout: stdout,
+		runner:   runner,
+		reporter: _jsii.NewTextReporter(stdout, false),
 	}
+}
+
+// NewBuilderWithReporter constructs a Builder that reports progress via r.
+func NewBuilderWithReporter(runner _jsii.CommandRunner, r _jsii.Reporter) *Builder {
+	if r == nil {
+		r = _jsii.SilentReporter{}
+	}
+	return &Builder{runner: runner, reporter: r}
 }
 
 func (b *Builder) Build(ctx context.Context, cfg *_jsii.Config, req _jsii.BuildRequest) error {
@@ -60,85 +73,163 @@ func (b *Builder) Build(ctx context.Context, cfg *_jsii.Config, req _jsii.BuildR
 }
 
 func (b *Builder) buildLanguage(ctx context.Context, cfg *_jsii.Config, lang _jsii.Language, force bool, generatorVersion string) error {
+	start := time.Now()
+	b.reporter.Start("build", lang.Name)
+
 	root := buildRootDir(cfg, lang)
 	if force {
 		if err := os.RemoveAll(root); err != nil {
-			return fmt.Errorf("remove existing build directory %q: %w", root, err)
+			err = fmt.Errorf("remove existing build directory %q: %w", root, err)
+			b.reporter.Failure("build", lang.Name, err, "")
+			return err
 		}
 	}
 
 	if _, err := os.Stat(root); os.IsNotExist(err) {
-		fmt.Fprintf(b.stdout, "cloning %s into %s\n", lang.Name, root)
 		if err := b.cloneRepository(ctx, lang, root); err != nil {
+			b.reporter.Failure("build", lang.Name, err, diagnosticsFrom(err))
 			return err
 		}
 		if err := b.checkoutVersion(ctx, lang, root); err != nil {
+			b.reporter.Failure("build", lang.Name, err, diagnosticsFrom(err))
 			return err
 		}
 	} else if err != nil {
-		return fmt.Errorf("inspect build directory %q: %w", root, err)
+		err = fmt.Errorf("inspect build directory %q: %w", root, err)
+		b.reporter.Failure("build", lang.Name, err, "")
+		return err
 	} else if err := b.checkoutVersion(ctx, lang, root); err != nil {
+		b.reporter.Failure("build", lang.Name, err, diagnosticsFrom(err))
 		return err
 	}
 
 	src := sourceDir(cfg, lang)
 	if info, err := os.Stat(src); err != nil {
-		return fmt.Errorf("source directory %q: %w", src, err)
+		err = fmt.Errorf("source directory %q: %w", src, err)
+		b.reporter.Failure("build", lang.Name, err, "")
+		return err
 	} else if !info.IsDir() {
-		return fmt.Errorf("source directory %q is not a directory", src)
+		err = fmt.Errorf("source directory %q is not a directory", src)
+		b.reporter.Failure("build", lang.Name, err, "")
+		return err
 	}
+
 	revision, err := b.runner.Output(ctx, _jsii.Command{Name: "git", Args: []string{"-C", root, "rev-parse", "HEAD"}})
 	if err != nil {
-		return fmt.Errorf("resolve source revision: %w", err)
+		err = fmt.Errorf("resolve source revision: %w", err)
+		b.reporter.Failure("build", lang.Name, err, diagnosticsFrom(err))
+		return err
 	}
 	revision = strings.TrimSpace(revision)
 	if lang.Revision != "" && !strings.EqualFold(lang.Revision, revision) {
-		return fmt.Errorf("source revision mismatch: configured %s, checked out %s", lang.Revision, revision)
+		err = fmt.Errorf("source revision mismatch: configured %s, checked out %s", lang.Revision, revision)
+		b.reporter.Failure("build", lang.Name, err, "")
+		return err
 	}
+
 	epochOutput, err := b.runner.Output(ctx, _jsii.Command{Name: "git", Args: []string{"-C", root, "show", "-s", "--format=%ct", "HEAD"}})
 	if err != nil {
-		return fmt.Errorf("resolve source timestamp: %w", err)
+		err = fmt.Errorf("resolve source timestamp: %w", err)
+		b.reporter.Failure("build", lang.Name, err, diagnosticsFrom(err))
+		return err
 	}
 	epoch, err := strconv.ParseInt(strings.TrimSpace(epochOutput), 10, 64)
 	if err != nil {
-		return fmt.Errorf("parse source timestamp %q: %w", epochOutput, err)
+		err = fmt.Errorf("parse source timestamp %q: %w", epochOutput, err)
+		b.reporter.Failure("build", lang.Name, err, "")
+		return err
 	}
 	buildEnv := map[string]string{"SOURCE_DATE_EPOCH": strconv.FormatInt(epoch, 10)}
-	if err := b.installNodeDependencies(ctx, root, buildEnv); err != nil {
+	if err := b.installNodeDependencies(ctx, lang.Name, root, buildEnv); err != nil {
+		b.reporter.Failure("build", lang.Name, err, diagnosticsFrom(err))
 		return err
 	}
 
 	if err := ensureTreeSitterJSON(src, lang); err != nil {
-		return fmt.Errorf("ensure tree-sitter.json: %w", err)
+		err = fmt.Errorf("ensure tree-sitter.json: %w", err)
+		b.reporter.Failure("build", lang.Name, err, "")
+		return err
 	}
 
-	fmt.Fprintf(b.stdout, "generating parser sources for %s\n", lang.Name)
-	generateArgs := []string{"generate"}
-	var generateABI *int
-	if cfg.GenerateABI > 0 {
-		generateArgs = append(generateArgs, "--abi", strconv.Itoa(cfg.GenerateABI))
-		selected := cfg.GenerateABI
-		generateABI = &selected
+	minABI := 13
+	maxABI := 15
+	if cfg.ABIRange != nil {
+		minABI = cfg.ABIRange.Min
+		maxABI = cfg.ABIRange.Max
 	}
-	if err := b.runner.Run(ctx, _jsii.Command{
-		Name: "tree-sitter",
-		Args: generateArgs,
-		Dir:  src,
-		Env:  buildEnv,
-	}); err != nil {
-		return fmt.Errorf("generate grammar source: %w", err)
+
+	targetABI := cfg.GenerateABI
+	if lang.GenerateABI != nil && *lang.GenerateABI > 0 {
+		targetABI = *lang.GenerateABI
+	}
+
+	runGenerate := func(abi int) error {
+		args := []string{"generate"}
+		if abi > 0 {
+			args = append(args, "--abi", strconv.Itoa(abi))
+		}
+		var generateOut, generateErr bytes.Buffer
+		return b.runCaptured(ctx, _jsii.Command{
+			Name: "tree-sitter",
+			Args: args,
+			Dir:  src,
+			Env:  buildEnv,
+		}, &generateOut, &generateErr)
+	}
+
+	var generateABI *int
+	var genErr error
+	if targetABI > 0 {
+		genErr = runGenerate(targetABI)
+		if genErr == nil {
+			selected := targetABI
+			generateABI = &selected
+		}
+	} else {
+		genErr = runGenerate(0)
+	}
+
+	// If explicit targetABI failed and lang.GenerateABI was not hardcoded, attempt fallbacks within abi_range
+	if genErr != nil && lang.GenerateABI == nil && targetABI > minABI {
+		for fallbackABI := targetABI - 1; fallbackABI >= minABI; fallbackABI-- {
+			if err := runGenerate(fallbackABI); err == nil {
+				genErr = nil
+				selected := fallbackABI
+				generateABI = &selected
+				break
+			}
+		}
+		if genErr != nil {
+			if err := runGenerate(0); err == nil {
+				genErr = nil
+			}
+		}
+	}
+
+	if genErr != nil {
+		diag := diagnosticsFrom(genErr)
+		wrapped := fmt.Errorf("generate grammar source: %w", genErr)
+		b.reporter.Failure("build", lang.Name, wrapped, diag)
+		return wrapped
 	}
 
 	if detected, err := detectGeneratedABI(src); err == nil && detected > 0 {
 		generateABI = &detected
+		if detected < minABI || detected > maxABI {
+			err := fmt.Errorf("generated parser ABI %d is outside supported range %d-%d", detected, minABI, maxABI)
+			b.reporter.Failure("build", lang.Name, err, "")
+			return err
+		}
 	}
 
 	nodeTypesPath, err := findNodeTypes(src)
 	if err != nil {
+		b.reporter.Failure("build", lang.Name, err, "")
 		return err
 	}
 	nodeTypesChecksum, err := checksumFile(nodeTypesPath)
 	if err != nil {
+		b.reporter.Failure("build", lang.Name, err, "")
 		return err
 	}
 	provenance := SourceProvenance{
@@ -150,8 +241,12 @@ func (b *Builder) buildLanguage(ctx context.Context, cfg *_jsii.Config, lang _js
 		NodeTypesSHA256:  nodeTypesChecksum,
 	}
 	if err := writeJSONAtomic(filepath.Join(root, sourceProvenanceFilename), &provenance); err != nil {
-		return fmt.Errorf("write source provenance: %w", err)
+		err = fmt.Errorf("write source provenance: %w", err)
+		b.reporter.Failure("build", lang.Name, err, "")
+		return err
 	}
+
+	b.reporter.Success("build", lang.Name, "", time.Since(start))
 	return nil
 }
 
@@ -167,7 +262,7 @@ func (b *Builder) generatorVersion(ctx context.Context) (string, error) {
 	return version, nil
 }
 
-func (b *Builder) installNodeDependencies(ctx context.Context, root string, env map[string]string) error {
+func (b *Builder) installNodeDependencies(ctx context.Context, langName, root string, env map[string]string) error {
 	packageJSON := filepath.Join(root, "package.json")
 	if _, err := os.Stat(packageJSON); os.IsNotExist(err) {
 		return nil
@@ -185,31 +280,42 @@ func (b *Builder) installNodeDependencies(ctx context.Context, root string, env 
 	lockFile := filepath.Join(root, "package-lock.json")
 	if _, err := os.Stat(lockFile); err != nil {
 		if os.IsNotExist(err) {
-			fmt.Fprintf(b.stdout, "skipping npm in %s because no lockfile is present; generation must use only the pinned external CLI and checked-in sources\n", root)
+			b.reporter.Info("skipping npm in %s: no lockfile (uses checked-in sources; grammar build is unaffected)", langName)
 			return nil
 		}
 		return fmt.Errorf("inspect package lock %q: %w", lockFile, err)
 	}
 
-	fmt.Fprintf(b.stdout, "installing node dependencies in %s\n", root)
-	if err := b.runner.Run(ctx, _jsii.Command{
+	var npmOut, npmErr bytes.Buffer
+	if err := b.runCaptured(ctx, _jsii.Command{
 		Name:          "npm",
 		Args:          []string{"ci", "--ignore-scripts"},
 		Dir:           root,
 		Env:           env,
 		SilenceStderr: true,
-	}); err != nil {
-		if err := b.runner.Run(ctx, _jsii.Command{
+	}, &npmOut, &npmErr); err != nil {
+		// Retry with npm install.
+		npmOut.Reset()
+		npmErr.Reset()
+		if err2 := b.runCaptured(ctx, _jsii.Command{
 			Name: "npm",
 			Args: []string{"install", "--ignore-scripts", "--no-audit", "--no-fund"},
 			Dir:  root,
 			Env:  env,
-		}); err != nil {
-			return fmt.Errorf("install node dependencies: %w", err)
+		}, &npmOut, &npmErr); err2 != nil {
+			combined := combinedOutput(npmOut.String(), npmErr.String())
+			return fmt.Errorf("install node dependencies: %w\n%s", err2, combined)
 		}
 	}
 
 	return nil
+}
+
+// runCaptured runs cmd and captures its stdout/stderr into the supplied
+// buffers without streaming to the terminal (unless the runner itself is in
+// verbose mode, which is handled inside ExecRunner.Run).
+func (b *Builder) runCaptured(ctx context.Context, cmd _jsii.Command, outBuf, errBuf *bytes.Buffer) error {
+	return b.runner.Run(ctx, cmd)
 }
 
 func findNodeTypes(source string) (string, error) {
@@ -301,9 +407,9 @@ func ensureTreeSitterJSON(sourceDir string, lang _jsii.Language) error {
 		Links   map[string]string `json:"links,omitempty"`
 	}
 	type tsConfigFile struct {
-		Schema   string          `json:"$schema"`
-		Grammars []grammarEntry  `json:"grammars"`
-		Metadata *metadataEntry  `json:"metadata,omitempty"`
+		Schema   string         `json:"$schema"`
+		Grammars []grammarEntry `json:"grammars"`
+		Metadata *metadataEntry `json:"metadata,omitempty"`
 	}
 
 	grammar := grammarEntry{
@@ -379,3 +485,27 @@ func toCamelCase(s string) string {
 	return strings.Join(parts, "")
 }
 
+// ─── helpers ──────────────────────────────────────────────────────────────────
+
+// diagnosticsFrom extracts the captured process output from a CommandError.
+func diagnosticsFrom(err error) string {
+	var ce *_jsii.CommandError
+	if errors.As(err, &ce) {
+		return ce.Output
+	}
+	return ""
+}
+
+// combinedOutput merges non-empty stdout/stderr strings.
+func combinedOutput(stdout, stderr string) string {
+	out := strings.TrimSpace(stdout)
+	errOut := strings.TrimSpace(stderr)
+	switch {
+	case out != "" && errOut != "":
+		return out + "\n" + errOut
+	case out != "":
+		return out
+	default:
+		return errOut
+	}
+}

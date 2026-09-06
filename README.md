@@ -7,7 +7,7 @@ A reproducible Tree-sitter grammar builder. It pins grammar revisions, the Tree-
 - Go 1.26+
 - Tree-sitter CLI 0.26.8 (the configured version is checked from `tree-sitter --version`)
 - The compiler and version selected by `tree-sitter-config.yaml`
-- Network access for the initial pinned grammar checkouts and locked npm dependencies
+- Network access for the initial pinned grammar checkouts and locked npm dependencies (repositories without a `package-lock.json` safely skip `npm`; grammar builds remain valid via checked-in sources)
 
 Install the pinned CLI with `make install-tree-sitter-cli`.
 
@@ -20,9 +20,9 @@ make release
 This runs the three explicit phases:
 
 ```bash
-go run ./cmd/tree-sitter build --force
-go run ./cmd/tree-sitter compile
-go run ./cmd/tree-sitter move --both --force
+go run ./cmd/ts-build build --force
+go run ./cmd/ts-build compile
+go run ./cmd/ts-build move --both --force
 ```
 
 `build` checks out each full commit, invokes `tree-sitter generate --abi 15`, and records the invoked generator version and generated `node-types.json` hash. `compile` records the invoked compiler identity, target triple, flags, and source provenance. `move` stages the complete catalog, loads every final native library, measures its ABI, validates parsing and queries, computes checksums from the final bytes, and swaps the release directory only after every grammar passes.
@@ -64,25 +64,34 @@ If `zig` is installed and available in `$PATH`, the builder will automatically i
 
 ```bash
 # Generate grammar sources for the host
-go run ./cmd/tree-sitter build --force
+go run ./cmd/ts-build build --force
 
 # Compile for Windows
-go run ./cmd/tree-sitter compile --os windows --arch amd64
+go run ./cmd/ts-build compile --os windows --arch amd64
 
 # Compile for macOS (Apple Silicon and Intel)
-go run ./cmd/tree-sitter compile --os macos --arch arm64
-go run ./cmd/tree-sitter compile --os macos --arch amd64
+go run ./cmd/ts-build compile --os macos --arch arm64
+go run ./cmd/ts-build compile --os macos --arch amd64
 
 # Compile for Linux host
-go run ./cmd/tree-sitter compile --os linux --arch amd64
+go run ./cmd/ts-build compile --os linux --arch amd64
 
 # Statically validate foreign binaries, dynamically validate host binaries, and publish the release catalog
-go run ./cmd/tree-sitter move --both --force
+go run ./cmd/ts-build move --both --force
 ```
+
+## Documentation
+
+Comprehensive documentation organized according to the [Diátaxis framework](https://diataxis.fr/) is available in the [`docs/`](docs/README.md) directory:
+
+- **Tutorials**: [Getting Started](docs/tutorials/getting-started.md)
+- **How-To Guides**: [Building & Releasing](docs/how-to/build-and-release-grammars.md), [Cross-Compilation](docs/how-to/cross-compile-grammars.md), [Adding Grammars](docs/how-to/add-a-new-grammar.md), [Syncing Versions](docs/how-to/sync-versions-with-go-mod.md), [Consuming in Go](docs/how-to/use-compiled-grammars-in-go.md)
+- **Reference**: [CLI Reference](docs/reference/cli.md), [Config Schema](docs/reference/configuration-schema.md), [Manifest Schema v2](docs/reference/manifest-schema-v2.md), [Grammar Catalog](docs/reference/grammar-catalog.md), [Makefile Reference](docs/reference/makefile.md)
+- **Explanation**: [Architecture & Pipeline](docs/explanation/architecture-and-pipeline.md), [Reproducibility & Provenance](docs/explanation/reproducible-builds-and-provenance.md), [Dual-Mode Validation](docs/explanation/dual-mode-validation.md), [ABI Evolution](docs/explanation/abi-evolution-and-runtime-compatibility.md)
 
 ## Manifest schema
 
-Published manifests use schema version 2. See [docs/manifest-schema-v2.md](docs/manifest-schema-v2.md) for the field contract and migration notes.
+Published manifests use schema version 2. See [docs/reference/manifest-schema-v2.md](docs/reference/manifest-schema-v2.md) for the field contract and migration notes.
 
 ## Development
 

@@ -4,14 +4,16 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"strings"
+
+	"github.com/spf13/cobra"
 )
 
+const AppVersion = "1.0.0"
 const DefaultConfigPath = "tree-sitter-config.yaml"
 const configFlagDescription = "Path to the YAML configuration file."
 
@@ -69,6 +71,8 @@ func (OSPathLookup) LookPath(name string) (string, error) {
 	return exec.LookPath(name)
 }
 
+// ─── App ─────────────────────────────────────────────────────────────────────
+
 type App struct {
 	stdout   io.Writer
 	stderr   io.Writer
@@ -104,149 +108,243 @@ func NewApp(stdout, stderr io.Writer, lookup PathLookup, load ConfigLoader, buil
 	}
 }
 
+// Run executes the Cobra command tree with the supplied argument slice.
 func (a *App) Run(ctx context.Context, args []string) error {
-	if len(args) == 0 {
-		a.printRootUsage()
-		return nil
-	}
-
-	switch args[0] {
-	case "help", "-h", "--help":
-		a.printRootUsage()
-		return nil
-	case "build":
-		return a.runBuild(ctx, args[1:])
-	case "compile":
-		return a.runCompile(ctx, args[1:])
-	case "move":
-		return a.runMove(ctx, args[1:])
-	default:
-		return fmt.Errorf("unknown command %q", args[0])
-	}
+	root := a.NewRootCmd()
+	root.SetArgs(args)
+	return root.ExecuteContext(ctx)
 }
 
-func (a *App) runBuild(ctx context.Context, args []string) error {
-	if a.builder == nil {
-		return errors.New("build command is not configured")
+// ─── Root command ─────────────────────────────────────────────────────────────
+
+// NewRootCmd builds and returns the Cobra root command for use in tests and
+// in main.go.
+func (a *App) NewRootCmd() *cobra.Command {
+	var configPath string
+	var verbose bool
+	var quiet bool
+
+	root := &cobra.Command{
+		Use:     "ts-build",
+		Version: AppVersion,
+		Short:   "Tree-Sitter grammar builder",
+		Long: `ts-build — clone, build, cross-compile, and publish tree-sitter grammars.
+
+Use --verbose to stream raw child-process output.
+Use --quiet to silence all non-error output.`,
+		SilenceUsage:  true,
+		SilenceErrors: true,
 	}
 
-	fs := flag.NewFlagSet("build", flag.ContinueOnError)
-	fs.SetOutput(a.stderr)
-	configPath := fs.String("config", DefaultConfigPath, configFlagDescription)
-	language := fs.String("language", "", "Only build the specified language.")
-	force := fs.Bool("force", false, "Re-clone existing repositories before building.")
-	if err := fs.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return nil
+	root.SetOut(a.stdout)
+	root.SetErr(a.stderr)
+
+	// Persistent flags available to every subcommand.
+	root.PersistentFlags().StringVarP(&configPath, "config", "c", DefaultConfigPath, configFlagDescription)
+	root.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "Stream raw child-process stdout/stderr.")
+	root.PersistentFlags().BoolVarP(&quiet, "quiet", "q", false, "Silence all non-error output.")
+
+	// Helper to build a reporter respecting the global flags.
+	makeReporter := func() Reporter {
+		if quiet {
+			return SilentReporter{}
 		}
-		return err
+		return NewTextReporter(a.stdout, verbose)
 	}
 
-	cfg, err := a.load(*configPath)
-	if err != nil {
-		return err
-	}
-	if err := RequireTools(a.lookup, "git", "tree-sitter"); err != nil {
-		return err
-	}
+	root.AddCommand(
+		a.buildCmd(&configPath, &verbose, makeReporter),
+		a.compileCmd(&configPath, &verbose, makeReporter),
+		a.moveCmd(&configPath, &verbose, makeReporter),
+		&cobra.Command{
+			Use:   "version",
+			Short: "Print the version of ts-build",
+			Run: func(_ *cobra.Command, _ []string) {
+				fmt.Fprintf(a.stdout, "ts-build version %s\n", AppVersion)
+			},
+		},
+	)
+	root.AddCommand(a.completionCmd(root))
 
-	return a.builder.Build(ctx, cfg, BuildRequest{
-		Language: *language,
-		Force:    *force,
-	})
+	return root
 }
 
-func (a *App) runCompile(ctx context.Context, args []string) error {
-	if a.compiler == nil {
-		return errors.New("compile command is not configured")
+// ─── build subcommand ─────────────────────────────────────────────────────────
+
+func (a *App) buildCmd(configPath *string, verbose *bool, makeReporter func() Reporter) *cobra.Command {
+	var language string
+	var force bool
+
+	cmd := &cobra.Command{
+		Use:   "build",
+		Short: "Clone repositories and generate grammar sources",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if a.builder == nil {
+				return errors.New("build command is not configured")
+			}
+			cfg, err := a.load(*configPath)
+			if err != nil {
+				return err
+			}
+			if err := RequireTools(a.lookup, "git", "tree-sitter"); err != nil {
+				return err
+			}
+			return a.builder.Build(cmd.Context(), cfg, BuildRequest{
+				Language: language,
+				Force:    force,
+			})
+		},
 	}
 
-	fs := flag.NewFlagSet("compile", flag.ContinueOnError)
-	fs.SetOutput(a.stderr)
-	configPath := fs.String("config", DefaultConfigPath, configFlagDescription)
-	language := fs.String("language", "", "Only compile the specified language.")
-	targetOS := fs.String("os", "", "Target operating system (linux, windows, macos).")
-	targetArch := fs.String("arch", "", "Target architecture (amd64, arm64).")
-	allowCrossValidation := fs.Bool("allow-cross-validation", false, "Allow cross-platform static validation for non-host binaries.")
-	staticCrossValidation := fs.Bool("static-cross-validation", false, "Alias for --allow-cross-validation.")
-	if err := fs.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return nil
-		}
-		return err
-	}
+	cmd.Flags().StringVarP(&language, "language", "l", "", "Only build the specified language.")
+	cmd.Flags().BoolVarP(&force, "force", "f", false, "Re-clone existing repositories before building.")
 
-	cfg, err := a.load(*configPath)
-	if err != nil {
-		return err
-	}
-	if err := RequireTools(a.lookup, "tree-sitter"); err != nil {
-		return err
-	}
+	// Suppress the unused parameter warning – makeReporter / verbose are used
+	// by builder/compiler/mover once they consume the Reporter interface.
+	_ = verbose
+	_ = makeReporter
 
-	return a.compiler.Compile(ctx, cfg, CompileRequest{
-		Language:              *language,
-		OS:                    *targetOS,
-		Arch:                  *targetArch,
-		AllowCrossValidation:  *allowCrossValidation || *staticCrossValidation,
-		StaticCrossValidation: *staticCrossValidation,
-	})
+	return cmd
 }
 
-func (a *App) runMove(ctx context.Context, args []string) error {
-	if a.mover == nil {
-		return errors.New("move command is not configured")
+// ─── compile subcommand ───────────────────────────────────────────────────────
+
+func (a *App) compileCmd(configPath *string, verbose *bool, makeReporter func() Reporter) *cobra.Command {
+	var language string
+	var targetOS string
+	var targetArch string
+	var allowCrossValidation bool
+	var staticCrossValidation bool
+
+	cmd := &cobra.Command{
+		Use:   "compile",
+		Short: "Build platform-specific shared libraries from grammar sources",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if a.compiler == nil {
+				return errors.New("compile command is not configured")
+			}
+			cfg, err := a.load(*configPath)
+			if err != nil {
+				return err
+			}
+			if err := RequireTools(a.lookup, "tree-sitter"); err != nil {
+				return err
+			}
+			return a.compiler.Compile(cmd.Context(), cfg, CompileRequest{
+				Language:              language,
+				OS:                    targetOS,
+				Arch:                  targetArch,
+				AllowCrossValidation:  allowCrossValidation || staticCrossValidation,
+				StaticCrossValidation: staticCrossValidation,
+			})
+		},
 	}
 
-	fs := flag.NewFlagSet("move", flag.ContinueOnError)
-	fs.SetOutput(a.stderr)
-	configPath := fs.String("config", DefaultConfigPath, configFlagDescription)
-	language := fs.String("language", "", "Only move the specified language.")
-	jsonMode := fs.Bool("json", false, "Move binaries and node-types.json only.")
-	scmMode := fs.Bool("scm", false, "Move binaries and queries/ only.")
-	bothMode := fs.Bool("both", false, "Move binaries, node-types.json, and queries/.")
-	clean := fs.Bool("clean", true, "Clean the build directory for each successfully moved language.")
-	force := fs.Bool("force", false, "Overwrite existing output files.")
-	allowCrossValidation := fs.Bool("allow-cross-validation", false, "Allow cross-platform static validation for non-host binaries.")
-	staticCrossValidation := fs.Bool("static-cross-validation", false, "Alias for --allow-cross-validation.")
-	if err := fs.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return nil
-		}
-		return err
-	}
+	cmd.Flags().StringVarP(&language, "language", "l", "", "Only compile the specified language.")
+	cmd.Flags().StringVarP(&targetOS, "os", "o", "", "Target operating system (linux, windows, macos).")
+	cmd.Flags().StringVarP(&targetArch, "arch", "a", "", "Target architecture (amd64, arm64).")
+	cmd.Flags().BoolVar(&allowCrossValidation, "allow-cross-validation", false, "Allow cross-platform static validation for non-host binaries.")
+	cmd.Flags().BoolVar(&staticCrossValidation, "static-cross-validation", false, "Alias for --allow-cross-validation.")
 
-	cfg, err := a.load(*configPath)
-	if err != nil {
-		return err
-	}
+	_ = verbose
+	_ = makeReporter
 
-	mode, err := ResolveMoveMode(*jsonMode, *scmMode, *bothMode, cfg.Output.DefaultMoveMode)
-	if err != nil {
-		return err
-	}
-
-	return a.mover.Move(ctx, cfg, MoveRequest{
-		Language:              *language,
-		Mode:                  mode,
-		Clean:                 *clean,
-		Force:                 *force,
-		AllowCrossValidation:  *allowCrossValidation || *staticCrossValidation,
-		StaticCrossValidation: *staticCrossValidation,
-	})
+	return cmd
 }
 
-func (a *App) printRootUsage() {
-	fmt.Fprintln(a.stdout, "Tree-Sitter grammar builder")
-	fmt.Fprintln(a.stdout)
-	fmt.Fprintln(a.stdout, "Usage:")
-	fmt.Fprintln(a.stdout, "  tree-sitter <command> [flags]")
-	fmt.Fprintln(a.stdout)
-	fmt.Fprintln(a.stdout, "Commands:")
-	fmt.Fprintln(a.stdout, "  build    Clone repositories and generate grammar sources")
-	fmt.Fprintln(a.stdout, "  compile  Build platform-specific shared libraries from grammar sources")
-	fmt.Fprintln(a.stdout, "  move     Organize compiled artifacts (--json, --scm, --both), create manifests, and clean build output")
+// ─── move subcommand ──────────────────────────────────────────────────────────
+
+func (a *App) moveCmd(configPath *string, verbose *bool, makeReporter func() Reporter) *cobra.Command {
+	var language string
+	var jsonMode bool
+	var scmMode bool
+	var bothMode bool
+	var clean bool
+	var force bool
+	var allowCrossValidation bool
+	var staticCrossValidation bool
+
+	cmd := &cobra.Command{
+		Use:   "move",
+		Short: "Organize compiled artifacts, create manifests, and clean build output",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if a.mover == nil {
+				return errors.New("move command is not configured")
+			}
+			cfg, err := a.load(*configPath)
+			if err != nil {
+				return err
+			}
+			mode, err := ResolveMoveMode(jsonMode, scmMode, bothMode, cfg.Output.DefaultMoveMode)
+			if err != nil {
+				return err
+			}
+			return a.mover.Move(cmd.Context(), cfg, MoveRequest{
+				Language:              language,
+				Mode:                  mode,
+				Clean:                 clean,
+				Force:                 force,
+				AllowCrossValidation:  allowCrossValidation || staticCrossValidation,
+				StaticCrossValidation: staticCrossValidation,
+			})
+		},
+	}
+
+	cmd.Flags().StringVarP(&language, "language", "l", "", "Only move the specified language.")
+	cmd.Flags().BoolVar(&jsonMode, "json", false, "Move binaries and node-types.json only.")
+	cmd.Flags().BoolVar(&scmMode, "scm", false, "Move binaries and queries/ only.")
+	cmd.Flags().BoolVar(&bothMode, "both", false, "Move binaries, node-types.json, and queries/.")
+	cmd.Flags().BoolVar(&clean, "clean", true, "Clean the build directory for each successfully moved language.")
+	cmd.Flags().BoolVarP(&force, "force", "f", false, "Overwrite existing output files.")
+	cmd.Flags().BoolVar(&allowCrossValidation, "allow-cross-validation", false, "Allow cross-platform static validation for non-host binaries.")
+	cmd.Flags().BoolVar(&staticCrossValidation, "static-cross-validation", false, "Alias for --allow-cross-validation.")
+
+	_ = verbose
+	_ = makeReporter
+
+	return cmd
 }
+
+// ─── completion subcommand ────────────────────────────────────────────────────
+
+func (a *App) completionCmd(root *cobra.Command) *cobra.Command {
+	return &cobra.Command{
+		Use:   "completion [bash|zsh|fish|powershell]",
+		Short: "Generate shell completion script",
+		Long: `To enable shell completion, source the output of this command.
+
+Bash:
+  source <(ts-build completion bash)
+
+Zsh:
+  source <(ts-build completion zsh)
+
+Fish:
+  ts-build completion fish | source
+
+PowerShell:
+  ts-build completion powershell | Out-String | Invoke-Expression`,
+		DisableFlagsInUseLine: true,
+		ValidArgs:             []string{"bash", "zsh", "fish", "powershell"},
+		Args:                  cobra.MatchAll(cobra.ExactArgs(1), cobra.OnlyValidArgs),
+		RunE: func(_ *cobra.Command, args []string) error {
+			switch args[0] {
+			case "bash":
+				return root.GenBashCompletion(a.stdout)
+			case "zsh":
+				return root.GenZshCompletion(a.stdout)
+			case "fish":
+				return root.GenFishCompletion(a.stdout, true)
+			case "powershell":
+				return root.GenPowerShellCompletionWithDesc(a.stdout)
+			default:
+				return fmt.Errorf("unsupported shell %q", args[0])
+			}
+		},
+	}
+}
+
+// ─── Move mode helpers ────────────────────────────────────────────────────────
 
 func ParseMoveMode(jsonMode, scmMode, bothMode bool) (MoveMode, error) {
 	selected := 0
@@ -306,6 +404,8 @@ func (m MoveMode) IncludesQueries() bool {
 	return m == MoveModeSCM || m == MoveModeBoth
 }
 
+// ─── Tool prerequisite check ──────────────────────────────────────────────────
+
 func RequireTools(lookup PathLookup, names ...string) error {
 	if lookup == nil {
 		lookup = OSPathLookup{}
@@ -322,6 +422,8 @@ func RequireTools(lookup PathLookup, names ...string) error {
 	}
 	return nil
 }
+
+// ─── Command / runner types ───────────────────────────────────────────────────
 
 type Command struct {
 	Name          string
@@ -343,19 +445,32 @@ type CommandRunner interface {
 	Output(context.Context, Command) (string, error)
 }
 
+// ─── ExecRunner ───────────────────────────────────────────────────────────────
+
+// ExecRunner executes commands against the real OS.  When verbose=true it
+// streams stdout/stderr in real time in addition to buffering them.  When
+// verbose=false (clean mode) it buffers silently, surfacing output only on
+// failure via CommandError.
 type ExecRunner struct {
-	stdout io.Writer
-	stderr io.Writer
+	stdout  io.Writer
+	stderr  io.Writer
+	verbose bool
 }
 
 func NewExecRunner(stdout, stderr io.Writer) *ExecRunner {
+	return NewVerboseExecRunner(stdout, stderr, true)
+}
+
+// NewVerboseExecRunner constructs an ExecRunner that streams output when
+// verbose=true and buffers silently when verbose=false.
+func NewVerboseExecRunner(stdout, stderr io.Writer, verbose bool) *ExecRunner {
 	if stdout == nil {
 		stdout = io.Discard
 	}
 	if stderr == nil {
 		stderr = io.Discard
 	}
-	return &ExecRunner{stdout: stdout, stderr: stderr}
+	return &ExecRunner{stdout: stdout, stderr: stderr, verbose: verbose}
 }
 
 func (r *ExecRunner) Run(ctx context.Context, cmd Command) error {
@@ -363,18 +478,23 @@ func (r *ExecRunner) Run(ctx context.Context, cmd Command) error {
 	execCmd.Dir = cmd.Dir
 	execCmd.Env = mergeEnv(os.Environ(), cmd.Env)
 
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	execCmd.Stdout = io.MultiWriter(r.stdout, &stdout)
-	if cmd.SilenceStderr {
-		execCmd.Stderr = &stderr
+	var stdoutBuf, stderrBuf bytes.Buffer
+
+	if r.verbose {
+		execCmd.Stdout = io.MultiWriter(r.stdout, &stdoutBuf)
+		if cmd.SilenceStderr {
+			execCmd.Stderr = &stderrBuf
+		} else {
+			execCmd.Stderr = io.MultiWriter(r.stderr, &stderrBuf)
+		}
 	} else {
-		execCmd.Stderr = io.MultiWriter(r.stderr, &stderr)
+		execCmd.Stdout = &stdoutBuf
+		execCmd.Stderr = &stderrBuf
 	}
 
 	if err := execCmd.Run(); err != nil {
-		outStr := strings.TrimSpace(stdout.String())
-		errStr := strings.TrimSpace(stderr.String())
+		outStr := strings.TrimSpace(stdoutBuf.String())
+		errStr := strings.TrimSpace(stderrBuf.String())
 		var combined string
 		switch {
 		case outStr != "" && errStr != "":
@@ -406,6 +526,8 @@ func (r *ExecRunner) Output(ctx context.Context, cmd Command) (string, error) {
 	return trimmed, nil
 }
 
+// ─── CommandError ─────────────────────────────────────────────────────────────
+
 type CommandError struct {
 	Command Command
 	Output  string
@@ -422,6 +544,8 @@ func (e *CommandError) Error() string {
 func (e *CommandError) Unwrap() error {
 	return e.Err
 }
+
+// ─── env helpers ─────────────────────────────────────────────────────────────
 
 func mergeEnv(base []string, overrides map[string]string) []string {
 	if len(overrides) == 0 {

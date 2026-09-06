@@ -1,25 +1,43 @@
-# Build artifacts
+# Build artifacts & staging
 /build/
+.grammar-staging-*
+*.previous
 *.o
 *.a
 *.so
 *.dylib
 *.dll
+*.exe
+
+# Compiled Go binaries
+/ts-build
+/sync-config
+/regen-manifests
+/tree-sitter
 
 # Generated grammar data
 /data/tree-sitter/grammar/*
 !data/tree-sitter/grammar/.gitkeep
-/data/*.lbug
 
-# Test output
+# Test & coverage output
 coverage.out
 coverage.html
+*.tmp
 
-# Local editor / agent files
+# Local editor, IDE & agent files
 .vscode/
 .idea/
 .codex
+*.swp
+*.swo
+.*.swp
+.*.swo
+*~
+docs/planning/
+docs/reviews/
+scripts/
+.agents/
 
-# OS files
+# OS metadata
 .DS_Store
 Thumbs.db

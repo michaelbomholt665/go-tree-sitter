@@ -82,29 +82,29 @@ build:
 # ── Grammar source generation (platform-independent) ─────────────────────────
 
 grammar-build: check-tree-sitter
-	go run ./cmd/tree-sitter build --config $(CONFIG)
+	go run ./cmd/ts-build build --config $(CONFIG)
 
 # ── Compile ───────────────────────────────────────────────────────────────────
 
 compile: check-tree-sitter
-	go run ./cmd/tree-sitter compile --config $(CONFIG)
+	go run ./cmd/ts-build compile --config $(CONFIG)
 
 compile-linux: check-tree-sitter
-	go run ./cmd/tree-sitter compile --config $(CONFIG) --os linux --arch amd64
+	go run ./cmd/ts-build compile --config $(CONFIG) --os linux --arch amd64
 
 compile-windows: check-tree-sitter
-	go run ./cmd/tree-sitter compile --config $(CONFIG) --os windows --arch amd64
+	go run ./cmd/ts-build compile --config $(CONFIG) --os windows --arch amd64
 
 compile-mac: check-tree-sitter
-	go run ./cmd/tree-sitter compile --config $(CONFIG) --os macos --arch amd64
-	go run ./cmd/tree-sitter compile --config $(CONFIG) --os macos --arch arm64
+	go run ./cmd/ts-build compile --config $(CONFIG) --os macos --arch amd64
+	go run ./cmd/ts-build compile --config $(CONFIG) --os macos --arch arm64
 
 compile-all: compile-linux compile-windows compile-mac
 
 # ── Move / publish ────────────────────────────────────────────────────────────
 
 move:
-	go run ./cmd/tree-sitter move --config $(CONFIG) --force
+	go run ./cmd/ts-build move --config $(CONFIG) --force
 
 # ── Release pipelines ─────────────────────────────────────────────────────────
 
@@ -134,22 +134,16 @@ lint:
 	golangci-lint run ./...
 
 tool-help:
-	go run ./cmd/tree-sitter --help
+	go run ./cmd/ts-build --help
 
 # ── Licenses ──────────────────────────────────────────────────────────────────
 
 licenses:
-	@echo "Generating license notices..."
-	go-licenses report github.com/michaelbomholt665/go-tree-sitter > NOTICE.md.tmp || true
-	@if [ -f NOTICE.md.tmp ]; then \
-		echo "# Third-Party Licenses\n" > NOTICE.md; \
-		echo "This project includes code from the following projects:\n" >> NOTICE.md; \
-		cat NOTICE.md.tmp >> NOTICE.md; \
-		rm NOTICE.md.tmp; \
-		echo "✓ NOTICE.md generated"; \
-	else \
-		echo "⚠ go-licenses failed; skipping NOTICE.md generation"; \
-	fi
+	@echo "Checking third-party Go dependency licenses..."
+	@go-licenses check ./cmd/ts-build 2>/dev/null && echo "✓ All dependencies have approved open-source licenses"
+	@echo ""
+	@echo "Dependency license report:"
+	@go-licenses report ./cmd/ts-build 2>/dev/null
 
 # ── Clean ─────────────────────────────────────────────────────────────────────
 

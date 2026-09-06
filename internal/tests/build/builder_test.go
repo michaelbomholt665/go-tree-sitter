@@ -300,6 +300,85 @@ func TestBuilderUsesPrereleasePseudoVersionCommitForCheckout(t *testing.T) {
 	}
 }
 
+func TestBuilderGeneratesWithConfiguredABIFallback(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	cfg := &ts.Config{
+		Version:              "2.0",
+		BuildDir:             filepath.Join(dir, "build"),
+		TreeSitterCLIVersion: "0.26.8",
+		ABIRange:             &ts.ABIRange{Min: 13, Max: 15},
+		GenerateABI:          15,
+		Languages: []ts.Language{{
+			Name:       "legacy-lang",
+			Version:    "v1.0.0",
+			Repository: "https://example.invalid/legacy-lang",
+			Revision:   "0123456789012345678901234567890123456789",
+			Sample:     "hello\n",
+		}},
+		Output: ts.Output{GrammarBase: filepath.Join(dir, "out"), GenerateManifest: true},
+	}
+
+	triedABI15 := false
+	triedABI14 := false
+	runner := &testutil.RecordingRunner{
+		OnRun: func(_ context.Context, cmd ts.Command) error {
+			if cmd.Name == "git" && len(cmd.Args) > 0 && cmd.Args[0] == "clone" {
+				dest := cmd.Args[len(cmd.Args)-1]
+				_ = os.MkdirAll(filepath.Join(dest, "src"), 0o755)
+				_ = os.WriteFile(filepath.Join(dest, "src", "node-types.json"), []byte("[]"), 0o644)
+				return nil
+			}
+			if cmd.Name == "tree-sitter" && len(cmd.Args) > 0 && cmd.Args[0] == "generate" {
+				for i, arg := range cmd.Args {
+					if arg == "--abi" && i+1 < len(cmd.Args) {
+						if cmd.Args[i+1] == "15" {
+							triedABI15 = true
+							return errors.New("grammar does not support ABI 15")
+						}
+						if cmd.Args[i+1] == "14" {
+							triedABI14 = true
+							// Simulate generating parser.c with ABI 14
+							_ = os.WriteFile(filepath.Join(cmd.Dir, "src", "parser.c"), []byte("#define LANGUAGE_VERSION 14\n"), 0o644)
+							return nil
+						}
+					}
+				}
+			}
+			return nil
+		},
+		OnOutput: func(_ context.Context, cmd ts.Command) (string, error) {
+			if cmd.Name == "tree-sitter" && len(cmd.Args) > 0 && cmd.Args[0] == "--version" {
+				return "tree-sitter 0.26.8", nil
+			}
+			if cmd.Name == "git" {
+				for _, arg := range cmd.Args {
+					if arg == "rev-parse" {
+						return "0123456789012345678901234567890123456789", nil
+					}
+					if arg == "--format=%ct" {
+						return "1700000000", nil
+					}
+				}
+			}
+			return "", nil
+		},
+	}
+
+	builder := tsbuild.NewBuilder(runner, ioDiscard{}, ioDiscard{})
+	if err := builder.Build(context.Background(), cfg, ts.BuildRequest{}); err != nil {
+		t.Fatalf("Build failed: %v", err)
+	}
+
+	if !triedABI15 {
+		t.Fatalf("expected builder to try ABI 15 first")
+	}
+	if !triedABI14 {
+		t.Fatalf("expected builder to fall back to ABI 14")
+	}
+}
+
 type ioDiscard struct{}
 
 func (ioDiscard) Write(p []byte) (int, error) {

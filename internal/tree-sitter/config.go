@@ -21,6 +21,7 @@ type Config struct {
 	BuildDir             string                 `yaml:"build_dir"`
 	TreeSitterCLIVersion string                 `yaml:"tree_sitter_cli_version"`
 	GenerateABI          int                    `yaml:"generate_abi"`
+	ABIRange             *ABIRange              `yaml:"abi_range,omitempty"`
 	BuildFlags           []string               `yaml:"build_flags"`
 	OSTarget             string                 `yaml:"OS_TARGET"`
 	Targets              map[string]BuildTarget `yaml:"targets"`
@@ -48,6 +49,7 @@ type Language struct {
 	Grammar           string `yaml:"grammar"`
 	Constructor       string `yaml:"constructor"`
 	Version           string `yaml:"version"`
+	GenerateABI       *int   `yaml:"generate_abi,omitempty"`
 	TreeSitterVersion string `yaml:"tree_sitter_version,omitempty"` // Deprecated compatibility input; never emitted as measured provenance.
 	Repository        string `yaml:"repository"`
 	Revision          string `yaml:"revision"`
@@ -104,8 +106,18 @@ func (c *Config) validateRequiredFields() error {
 		if strings.TrimSpace(c.TreeSitterCLIVersion) == "" {
 			return errors.New("tree_sitter_cli_version is required for config version 2.0")
 		}
-		if c.GenerateABI <= 0 {
-			return errors.New("generate_abi must explicitly select a positive ABI for config version 2.0")
+		if c.ABIRange != nil {
+			if c.ABIRange.Min <= 0 || c.ABIRange.Max <= 0 {
+				return errors.New("abi_range must specify positive min and max versions")
+			}
+			if c.ABIRange.Min > c.ABIRange.Max {
+				return errors.New("abi_range min must be <= max")
+			}
+		}
+		if c.GenerateABI > 0 && c.ABIRange != nil {
+			if c.GenerateABI < c.ABIRange.Min || c.GenerateABI > c.ABIRange.Max {
+				return fmt.Errorf("generate_abi %d must be within supported abi_range %d-%d for config version 2.0", c.GenerateABI, c.ABIRange.Min, c.ABIRange.Max)
+			}
 		}
 	}
 
@@ -304,6 +316,20 @@ func (c *Config) validateLanguage(index int, lang *Language, seen map[string]str
 	if lang.Revision != "" && !regexp.MustCompile(`^[0-9a-fA-F]{40}$`).MatchString(lang.Revision) {
 		return fmt.Errorf("languages[%d].revision must be a full 40-character commit", index)
 	}
+	if lang.GenerateABI != nil {
+		if *lang.GenerateABI <= 0 {
+			return fmt.Errorf("languages[%d].generate_abi must be a positive integer", index)
+		}
+		minABI := 13
+		maxABI := 15
+		if c.ABIRange != nil {
+			minABI = c.ABIRange.Min
+			maxABI = c.ABIRange.Max
+		}
+		if *lang.GenerateABI < minABI || *lang.GenerateABI > maxABI {
+			return fmt.Errorf("languages[%d].generate_abi %d must be within supported range %d-%d", index, *lang.GenerateABI, minABI, maxABI)
+		}
+	}
 	if c.Version == "2.0" {
 		if lang.Revision == "" {
 			return fmt.Errorf("languages[%d].revision is required for config version 2.0", index)
@@ -463,6 +489,12 @@ func parseRangeExpression(expr string) ([]versionConstraint, error) {
 }
 
 func applyDefaults(cfg *Config) {
+	if cfg.ABIRange == nil {
+		cfg.ABIRange = &ABIRange{Min: 13, Max: 15}
+	}
+	if cfg.GenerateABI == 0 {
+		cfg.GenerateABI = 15
+	}
 	if strings.TrimSpace(cfg.BuildDir) == "" {
 		cfg.BuildDir = "build"
 	}

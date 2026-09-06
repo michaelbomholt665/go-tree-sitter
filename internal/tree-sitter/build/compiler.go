@@ -9,16 +9,20 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	_jsii "github.com/michaelbomholt665/go-tree-sitter/internal/tree-sitter"
 )
 
 type Compiler struct {
-	runner _jsii.CommandRunner
-	lookup _jsii.PathLookup
-	stdout io.Writer
+	runner   _jsii.CommandRunner
+	lookup   _jsii.PathLookup
+	reporter _jsii.Reporter
 }
 
+// NewCompiler constructs a Compiler.  The stdout and stderr writers are kept
+// for backward-compatibility; a TextReporter is derived from stdout.  Prefer
+// NewCompilerWithReporter for new code.
 func NewCompiler(runner _jsii.CommandRunner, lookup _jsii.PathLookup, stdout, _ io.Writer) *Compiler {
 	if lookup == nil {
 		lookup = _jsii.OSPathLookup{}
@@ -27,10 +31,21 @@ func NewCompiler(runner _jsii.CommandRunner, lookup _jsii.PathLookup, stdout, _ 
 		stdout = io.Discard
 	}
 	return &Compiler{
-		runner: runner,
-		lookup: lookup,
-		stdout: stdout,
+		runner:   runner,
+		lookup:   lookup,
+		reporter: _jsii.NewTextReporter(stdout, false),
 	}
+}
+
+// NewCompilerWithReporter constructs a Compiler that reports progress via r.
+func NewCompilerWithReporter(runner _jsii.CommandRunner, lookup _jsii.PathLookup, r _jsii.Reporter) *Compiler {
+	if lookup == nil {
+		lookup = _jsii.OSPathLookup{}
+	}
+	if r == nil {
+		r = _jsii.SilentReporter{}
+	}
+	return &Compiler{runner: runner, lookup: lookup, reporter: r}
 }
 
 func (c *Compiler) Compile(ctx context.Context, cfg *_jsii.Config, req _jsii.CompileRequest) error {
@@ -54,60 +69,83 @@ func (c *Compiler) Compile(ctx context.Context, cfg *_jsii.Config, req _jsii.Com
 }
 
 func (c *Compiler) compileLanguage(ctx context.Context, cfg *_jsii.Config, lang _jsii.Language, target target) error {
+	targetLabel := target.Platform + "/" + target.Arch
+	start := time.Now()
+	c.reporter.Start("compile", lang.Name+" ["+targetLabel+"]")
+
 	src := sourceDir(cfg, lang)
 	info, err := os.Stat(src)
 	if err != nil || !info.IsDir() {
-		return fmt.Errorf("source directory %q not found; run `tree-sitter build` first", src)
+		err = fmt.Errorf("source directory %q not found; run `tree-sitter build` first", src)
+		c.reporter.Failure("compile", lang.Name, err, "")
+		return err
 	}
 
 	outDir := binaryDirForTarget(cfg, lang, target)
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
-		return fmt.Errorf("create binary output directory %q: %w", outDir, err)
+		err = fmt.Errorf("create binary output directory %q: %w", outDir, err)
+		c.reporter.Failure("compile", lang.Name+" ["+targetLabel+"]", err, "")
+		return err
 	}
 
 	outputPath := filepath.Join(outDir, binaryFilename(lang, target))
 	absoluteOutputPath, err := filepath.Abs(outputPath)
 	if err != nil {
-		return fmt.Errorf("resolve output path %q: %w", outputPath, err)
+		err = fmt.Errorf("resolve output path %q: %w", outputPath, err)
+		c.reporter.Failure("compile", lang.Name+" ["+targetLabel+"]", err, "")
+		return err
 	}
+
 	var sourceProvenance SourceProvenance
 	if err := readJSON(filepath.Join(buildRootDir(cfg, lang), sourceProvenanceFilename), &sourceProvenance); err != nil {
-		return fmt.Errorf("load source provenance; run `tree-sitter build` first: %w", err)
+		err = fmt.Errorf("load source provenance; run `tree-sitter build` first: %w", err)
+		c.reporter.Failure("compile", lang.Name+" ["+targetLabel+"]", err, "")
+		return err
 	}
+
 	toolchainEnv, compiler, cleanup, err := c.toolchainEnv(ctx, outDir, target)
 	if err != nil {
+		c.reporter.Failure("compile", lang.Name+" ["+targetLabel+"]", err, "")
 		return err
 	}
 	defer cleanup()
+
 	toolchainEnv["SOURCE_DATE_EPOCH"] = fmt.Sprintf("%d", sourceProvenance.SourceDateEpoch)
 	if len(cfg.BuildFlags) > 0 {
 		toolchainEnv["CFLAGS"] = strings.Join(cfg.BuildFlags, " ")
 		toolchainEnv["CXXFLAGS"] = strings.Join(cfg.BuildFlags, " ")
 	}
 
-	fmt.Fprintf(c.stdout, "compiling %s for %s/%s\n", lang.Name, target.Platform, target.Arch)
 	isCross := !isHostTarget(target.Platform, target.Arch)
-	if err := c.runner.Run(ctx, _jsii.Command{
+	buildErr := c.runner.Run(ctx, _jsii.Command{
 		Name:          "tree-sitter",
 		Args:          []string{"build", "--output", absoluteOutputPath},
 		Dir:           src,
 		Env:           toolchainEnv,
 		SilenceStderr: isCross,
-	}); err != nil {
-		if isCross && isDlopenError(err) {
+	})
+	if buildErr != nil {
+		if isCross && isDlopenError(buildErr) {
 			if stat, statErr := os.Stat(absoluteOutputPath); statErr == nil && stat.Mode().IsRegular() && stat.Size() > 0 {
-				err = nil
+				buildErr = nil
 			}
 		}
-		if err != nil {
-			return fmt.Errorf("run tree-sitter build: %w", err)
+		if buildErr != nil {
+			diag := diagnosticsFrom(buildErr)
+			wrapped := fmt.Errorf("run tree-sitter build: %w", buildErr)
+			c.reporter.Failure("compile", lang.Name+" ["+targetLabel+"]", wrapped, diag)
+			return wrapped
 		}
 	}
 
 	if info, err := os.Stat(absoluteOutputPath); err != nil {
-		return fmt.Errorf("expected compiled library %q was not created", absoluteOutputPath)
+		err = fmt.Errorf("expected compiled library %q was not created", absoluteOutputPath)
+		c.reporter.Failure("compile", lang.Name+" ["+targetLabel+"]", err, "")
+		return err
 	} else if !info.Mode().IsRegular() {
-		return fmt.Errorf("compiled library %q is not a regular file", absoluteOutputPath)
+		err = fmt.Errorf("compiled library %q is not a regular file", absoluteOutputPath)
+		c.reporter.Failure("compile", lang.Name+" ["+targetLabel+"]", err, "")
+		return err
 	}
 
 	provenance := BinaryProvenance{
@@ -124,9 +162,12 @@ func (c *Compiler) compileLanguage(ctx context.Context, cfg *_jsii.Config, lang 
 		BuildFlags:       append([]string(nil), cfg.BuildFlags...),
 	}
 	if err := writeJSONAtomic(binaryProvenancePath(absoluteOutputPath), &provenance); err != nil {
-		return fmt.Errorf("write binary provenance: %w", err)
+		err = fmt.Errorf("write binary provenance: %w", err)
+		c.reporter.Failure("compile", lang.Name+" ["+targetLabel+"]", err, "")
+		return err
 	}
 
+	c.reporter.Success("compile", lang.Name, targetLabel, time.Since(start))
 	return nil
 }
 
