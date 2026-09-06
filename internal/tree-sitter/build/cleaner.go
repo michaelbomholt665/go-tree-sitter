@@ -15,28 +15,35 @@ import (
 var protectedManifestPatterns = []string{
 	"tree-sitter.json",
 	"package.json",
-	"Cargo.toml",
-	"pyproject.toml",
-	"setup.py",
-	"Package.swift",
 	"go.mod",
-	"Makefile",
-	"binding.gyp",
-	"CMakeLists.txt",
-	"build.zig",
 	"LICENSE*",
 	"LICENCE*",
+	"NOTICE*",
 	"grammar.js",
 	"node-types.json",
+	".source-provenance.json",
 }
 
 var prunedDirNames = map[string]bool{
 	".git":         true,
+	".github":      true,
+	".vscode":      true,
+	".idea":        true,
 	"node_modules": true,
+	"bindings":     true,
 	"test":         true,
+	"tests":        true,
 	"corpus":       true,
 	"examples":     true,
 	"target":       true,
+	"docs":         true,
+	"doc":          true,
+	"script":       true,
+	"scripts":      true,
+	"tools":        true,
+	"benchmark":    true,
+	"benchmarks":   true,
+	"_layouts":     true,
 }
 
 type Cleaner struct{}
@@ -104,11 +111,14 @@ func (c *Cleaner) PruneLanguage(buildDir, language string) error {
 			return nil
 		}
 
-		if strings.HasSuffix(name, ".o") || strings.HasSuffix(name, ".obj") {
-			if !isProtectedFile(name) {
-				if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-					return fmt.Errorf("prune object file %q: %w", path, err)
-				}
+		if isProtectedFile(name) {
+			return nil
+		}
+
+		inProtectedDir := isProtectedDir(slashRel, filepath.Base(filepath.Dir(slashRel)))
+		if isPrunedFile(name, inProtectedDir) {
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("prune file %q: %w", path, err)
 			}
 		}
 		return nil
@@ -117,6 +127,58 @@ func (c *Cleaner) PruneLanguage(buildDir, language string) error {
 		return fmt.Errorf("prune language %s: %w", language, err)
 	}
 	return nil
+}
+
+func isPrunedFile(name string, inProtectedDir bool) bool {
+	lower := strings.ToLower(name)
+
+	// Object and static library archives
+	if strings.HasSuffix(lower, ".o") || strings.HasSuffix(lower, ".obj") ||
+		strings.HasSuffix(lower, ".a") || strings.HasSuffix(lower, ".lib") {
+		return true
+	}
+
+	// Inside protected directories (src, queries), only object/archive files are pruned
+	if inProtectedDir {
+		return false
+	}
+
+	// Lock files
+	if strings.HasSuffix(lower, ".lock") || strings.HasSuffix(lower, ".resolved") ||
+		lower == "go.sum" || lower == "package-lock.json" || lower == "yarn.lock" || lower == "pnpm-lock.yaml" {
+		return true
+	}
+
+	// Git, VCS, and editor/tool configs
+	if lower == ".gitignore" || lower == ".gitattributes" || lower == ".gitmodules" ||
+		lower == ".editorconfig" || lower == ".clang-format" || lower == ".git-blame-ignore-revs" ||
+		lower == ".envrc" || lower == ".npmignore" {
+		return true
+	}
+
+	// Linter configs
+	if strings.HasPrefix(lower, "eslint.config.") || strings.HasPrefix(lower, ".eslintrc") ||
+		strings.HasPrefix(lower, ".prettierrc") || lower == ".prettierignore" || lower == ".tsqueryrc.json" {
+		return true
+	}
+
+	// Documentation & repository metadata
+	if strings.HasPrefix(name, "README") || strings.HasPrefix(name, "CHANGELOG") ||
+		strings.HasPrefix(name, "CONTRIBUTING") || strings.HasPrefix(name, "SECURITY") ||
+		strings.HasPrefix(name, "FUNDING") || strings.HasPrefix(name, "ISSUE_TEMPLATE") ||
+		strings.HasPrefix(name, "CODE_OF_CONDUCT") {
+		return true
+	}
+
+	// Unused package / build manifests for other ecosystems
+	if lower == "package.swift" || lower == "binding.gyp" || lower == "setup.py" ||
+		lower == "pyproject.toml" || lower == "cargo.toml" || lower == "cmakelists.txt" ||
+		lower == "makefile" || lower == "justfile" || lower == "build.zig" ||
+		lower == "build.zig.zon" || lower == "gemfile" || lower == "gemfile.lock" {
+		return true
+	}
+
+	return false
 }
 
 func (c *Cleaner) Clean(ctx context.Context, cfg *_jsii.Config, req _jsii.CleanRequest) error {

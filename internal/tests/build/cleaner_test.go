@@ -44,10 +44,18 @@ func TestCleanerPruneLanguagePreservesSourcesAndManifests(t *testing.T) {
 	// Bloat dirs to create
 	bloatDirs := []string{
 		filepath.Join(langDir, ".git", "objects", "01"),
+		filepath.Join(langDir, ".github", "workflows"),
+		filepath.Join(langDir, ".vscode"),
 		filepath.Join(langDir, "node_modules", "tree-sitter-cli"),
+		filepath.Join(langDir, "bindings", "python"),
 		filepath.Join(langDir, "test", "corpus"),
+		filepath.Join(langDir, "tests"),
 		filepath.Join(langDir, "corpus"),
 		filepath.Join(langDir, "examples"),
+		filepath.Join(langDir, "docs"),
+		filepath.Join(langDir, "script"),
+		filepath.Join(langDir, "tools"),
+		filepath.Join(langDir, "benchmark"),
 		filepath.Join(langDir, "target", "release"),
 		filepath.Join(langDir, "build", "Release"),
 		filepath.Join(langDir, "src", "tree_sitter"),
@@ -64,14 +72,40 @@ func TestCleanerPruneLanguagePreservesSourcesAndManifests(t *testing.T) {
 		filepath.Join(langDir, ".git", "config"):                              "[core]\n",
 		filepath.Join(langDir, ".git", "HEAD"):                                "ref: refs/heads/main\n",
 		filepath.Join(langDir, ".git", "objects", "01", "2345"):               "blob data",
+		filepath.Join(langDir, ".github", "workflows", "ci.yml"):              "name: CI\n",
+		filepath.Join(langDir, ".vscode", "settings.json"):                    "{}",
 		filepath.Join(langDir, "node_modules", "tree-sitter-cli", "index.js"): "module.exports = {};",
+		filepath.Join(langDir, "bindings", "python", "binding.c"):             "/* binding */",
 		filepath.Join(langDir, "test", "corpus", "tests.txt"):                 "=== test ===",
+		filepath.Join(langDir, "tests", "test_all.py"):                        "assert True",
 		filepath.Join(langDir, "corpus", "more_tests.txt"):                    "=== test2 ===",
 		filepath.Join(langDir, "examples", "example.py"):                      "print('hello')",
+		filepath.Join(langDir, "docs", "index.md"):                            "# Docs",
+		filepath.Join(langDir, "script", "test.sh"):                           "#!/bin/sh",
+		filepath.Join(langDir, "tools", "gen.py"):                             "# gen",
+		filepath.Join(langDir, "benchmark", "bench.js"):                       "// bench",
 		filepath.Join(langDir, "target", "release", "lib.a"):                  "archive data",
 		filepath.Join(langDir, "build", "Release", "obj.target"):              "native obj",
 		filepath.Join(langDir, "src", "parser.o"):                             "compiled obj",
 		filepath.Join(langDir, "src", "scanner.obj"):                          "compiled obj win",
+		filepath.Join(langDir, "Cargo.toml"):                                  `[package] name = "tree-sitter-python"`,
+		filepath.Join(langDir, "Cargo.lock"):                                  "# lock",
+		filepath.Join(langDir, "pyproject.toml"):                              `[build-system] requires = ["setuptools"]`,
+		filepath.Join(langDir, "setup.py"):                                    "from setuptools import setup",
+		filepath.Join(langDir, "Package.swift"):                               "// swift-tools-version:5.3",
+		filepath.Join(langDir, "Package.resolved"):                            "// lock",
+		filepath.Join(langDir, "Makefile"):                                    "all:\n\t@true\n",
+		filepath.Join(langDir, "binding.gyp"):                                 `{"targets": []}`,
+		filepath.Join(langDir, "CMakeLists.txt"):                              "cmake_minimum_required(VERSION 3.10)",
+		filepath.Join(langDir, "build.zig"):                                   "const std = @import(\"std\");",
+		filepath.Join(langDir, "build.zig.zon"):                               ".{}",
+		filepath.Join(langDir, "package-lock.json"):                           "{}",
+		filepath.Join(langDir, "README.md"):                                   "# README",
+		filepath.Join(langDir, "CHANGELOG.md"):                                "# Changelog",
+		filepath.Join(langDir, ".gitignore"):                                  "/target\n",
+		filepath.Join(langDir, ".gitattributes"):                              "* text=auto\n",
+		filepath.Join(langDir, ".editorconfig"):                               "root = true\n",
+		filepath.Join(langDir, ".clang-format"):                               "Language: Cpp\n",
 	}
 	for path, content := range bloatFiles {
 		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
@@ -89,15 +123,7 @@ func TestCleanerPruneLanguagePreservesSourcesAndManifests(t *testing.T) {
 		filepath.Join(langDir, "queries", "highlights.scm"):      "(identifier) @variable",
 		filepath.Join(langDir, "tree-sitter.json"):               `{"name": "python"}`,
 		filepath.Join(langDir, "package.json"):                   `{"name": "tree-sitter-python"}`,
-		filepath.Join(langDir, "Cargo.toml"):                     `[package] name = "tree-sitter-python"`,
-		filepath.Join(langDir, "pyproject.toml"):                 `[build-system] requires = ["setuptools"]`,
-		filepath.Join(langDir, "setup.py"):                       "from setuptools import setup",
-		filepath.Join(langDir, "Package.swift"):                  "// swift-tools-version:5.3",
 		filepath.Join(langDir, "go.mod"):                         "module github.com/tree-sitter/tree-sitter-python",
-		filepath.Join(langDir, "Makefile"):                       "all:\n\t@true\n",
-		filepath.Join(langDir, "binding.gyp"):                    `{"targets": []}`,
-		filepath.Join(langDir, "CMakeLists.txt"):                 "cmake_minimum_required(VERSION 3.10)",
-		filepath.Join(langDir, "build.zig"):                      "const std = @import(\"std\");",
 		filepath.Join(langDir, "LICENSE"):                        "MIT License",
 		filepath.Join(langDir, "LICENSE.md"):                     "# MIT License",
 	}
@@ -119,7 +145,7 @@ func TestCleanerPruneLanguagePreservesSourcesAndManifests(t *testing.T) {
 		}
 	}
 	// Verify bloat directories are removed
-	for _, dirName := range []string{".git", "node_modules", "test", "corpus", "examples", "target", filepath.Join("build", "Release")} {
+	for _, dirName := range []string{".git", ".github", ".vscode", "node_modules", "bindings", "test", "tests", "corpus", "examples", "docs", "script", "tools", "benchmark", "target", filepath.Join("build", "Release")} {
 		p := filepath.Join(langDir, dirName)
 		if _, err := os.Stat(p); !os.IsNotExist(err) {
 			t.Errorf("expected bloat dir %s to be deleted, err=%v", p, err)
