@@ -64,6 +64,11 @@ func (c *Compiler) Compile(ctx context.Context, cfg *_jsii.Config, req _jsii.Com
 		if err := c.compileLanguage(ctx, cfg, lang, target); err != nil {
 			compileErrors = append(compileErrors, fmt.Errorf("compile %s for %s/%s: %w", lang.Name, target.Platform, target.Arch, err))
 		}
+		if req.BuildWasm {
+			if err := c.CompileWasm(ctx, lang, buildRootDir(cfg, lang)); err != nil {
+				compileErrors = append(compileErrors, fmt.Errorf("compile wasm %s: %w", lang.Name, err))
+			}
+		}
 	}
 	return errors.Join(compileErrors...)
 }
@@ -390,4 +395,119 @@ func isDlopenError(err error) bool {
 	return strings.Contains(msg, "dlopen failed") ||
 		strings.Contains(msg, "Error opening dynamic library") ||
 		strings.Contains(msg, "cannot open shared object file")
+}
+
+func (c *Compiler) CompileWasm(ctx context.Context, lang _jsii.Language, buildDir string) error {
+	start := time.Now()
+	c.reporter.Start("compile wasm", lang.Name)
+
+	grammarDir := buildDir
+	if lang.SourceSubdir != "" {
+		candidate := filepath.Join(buildDir, filepath.FromSlash(lang.SourceSubdir))
+		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+			grammarDir = candidate
+		}
+	}
+
+	info, err := os.Stat(grammarDir)
+	if err != nil || !info.IsDir() {
+		err = fmt.Errorf("grammar directory %q not found; run `tree-sitter build` first", grammarDir)
+		c.reporter.Failure("compile wasm", lang.Name, err, "")
+		return err
+	}
+
+	wasmFilename := fmt.Sprintf("tree-sitter-%s.wasm", lang.Name)
+	outputPath := filepath.Join(buildDir, wasmFilename)
+	absOutputPath, err := filepath.Abs(outputPath)
+	if err != nil {
+		absOutputPath = outputPath
+	}
+
+	_, emccErr := c.lookup.LookPath("emcc")
+	_, dockerErr := c.lookup.LookPath("docker")
+	_, podmanErr := c.lookup.LookPath("podman")
+
+	if emccErr != nil && dockerErr != nil && podmanErr != nil {
+		err := errors.New("no WASM toolchain available; install emcc or a container engine (docker or podman) with emscripten/emsdk")
+		c.reporter.Failure("compile wasm", lang.Name, err, "")
+		return err
+	}
+
+	cmdEnv := make(map[string]string)
+	var cleanup func()
+	if emccErr != nil {
+		containerEngine := "docker"
+		if dockerErr != nil {
+			containerEngine = "podman"
+		}
+		wrapperDir, wrapperCleanup, err := c.createEmscriptenWrapper(buildDir, grammarDir, containerEngine)
+		if err != nil {
+			c.reporter.Failure("compile wasm", lang.Name, err, "")
+			return err
+		}
+		cleanup = wrapperCleanup
+		cmdEnv["PATH"] = wrapperDir + string(os.PathListSeparator) + os.Getenv("PATH")
+	}
+	if cleanup != nil {
+		defer cleanup()
+	}
+
+	buildErr := c.runner.Run(ctx, _jsii.Command{
+		Name: "tree-sitter",
+		Args: []string{"build", "--wasm", "--output", absOutputPath},
+		Dir:  grammarDir,
+		Env:  cmdEnv,
+	})
+	if buildErr != nil {
+		diag := diagnosticsFrom(buildErr)
+		wrapped := fmt.Errorf("run tree-sitter build --wasm: %w", buildErr)
+		c.reporter.Failure("compile wasm", lang.Name, wrapped, diag)
+		return wrapped
+	}
+
+	if _, err := os.Stat(absOutputPath); err != nil {
+		candidates := []string{
+			filepath.Join(grammarDir, wasmFilename),
+			filepath.Join(grammarDir, fmt.Sprintf("tree-sitter-%s.wasm", lang.Grammar)),
+		}
+		found := false
+		for _, cand := range candidates {
+			if stat, sErr := os.Stat(cand); sErr == nil && stat.Mode().IsRegular() && stat.Size() > 0 {
+				if err := copyFile(cand, absOutputPath, true); err == nil {
+					found = true
+					break
+				}
+			}
+		}
+		if !found {
+			err := fmt.Errorf("expected compiled wasm %q was not created", absOutputPath)
+			c.reporter.Failure("compile wasm", lang.Name, err, "")
+			return err
+		}
+	}
+
+	c.reporter.Success("compile wasm", lang.Name, "wasm", time.Since(start))
+	return nil
+}
+
+func (c *Compiler) createEmscriptenWrapper(baseDir, grammarDir, containerEngine string) (string, func(), error) {
+	tempDir, err := os.MkdirTemp(baseDir, "wasm-toolchain-")
+	if err != nil {
+		return "", nil, fmt.Errorf("create wasm toolchain wrapper dir: %w", err)
+	}
+	absGrammarDir, err := filepath.Abs(grammarDir)
+	if err != nil {
+		absGrammarDir = grammarDir
+	}
+	wrapperPath := filepath.Join(tempDir, "emcc")
+	content := fmt.Sprintf(`#!/usr/bin/env bash
+exec %q run --rm -v %q:%q -w %q emscripten/emsdk emcc "$@"
+`, containerEngine, absGrammarDir, absGrammarDir, absGrammarDir)
+	if err := os.WriteFile(wrapperPath, []byte(content), 0o755); err != nil {
+		_ = os.RemoveAll(tempDir)
+		return "", nil, fmt.Errorf("write emcc wrapper: %w", err)
+	}
+	return tempDir, func() {
+		_ = os.RemoveAll(tempDir)
+	}, nil
 }

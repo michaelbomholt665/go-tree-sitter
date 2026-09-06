@@ -48,12 +48,15 @@ type ABIInfo struct {
 }
 
 type ArtifactInfo struct {
-	HasNodeTypes bool `json:"has_node_types"`
-	HasQueries   bool `json:"has_queries"`
-	HasWasm      bool `json:"has_wasm"`
+	HasNodeTypes        bool `json:"has_node_types"`
+	HasCompactNodeTypes bool `json:"has_compact_node_types"`
+	HasQueries          bool `json:"has_queries"`
+	HasWasm             bool `json:"has_wasm"`
+	HasCSource          bool `json:"has_c_source"`
+	HasJS               bool `json:"has_js"`
 }
 
-func GenerateManifest(lang _jsii.Language, binaryPaths []string, measuredABI map[string]uint32, provenance map[string]BinaryProvenance, hasNodeTypes, hasQueries bool) (*ManifestData, error) {
+func GenerateManifest(lang _jsii.Language, binaryPaths []string, measuredABI map[string]uint32, provenance map[string]BinaryProvenance, artifacts ArtifactInfo) (*ManifestData, error) {
 	if len(binaryPaths) == 0 {
 		return nil, errors.New("cannot generate manifest without binaries")
 	}
@@ -117,7 +120,7 @@ func GenerateManifest(lang _jsii.Language, binaryPaths []string, measuredABI map
 		ParserABI:       parserABI,
 		Binaries:        binaries,
 		ABI:             ABIInfo{MinVersion: parserABI, MaxVersion: parserABI, ParserVersion: generatorVersion},
-		Artifacts:       ArtifactInfo{HasNodeTypes: hasNodeTypes, HasQueries: hasQueries, HasWasm: false},
+		Artifacts:       artifacts,
 		BuildProvenance: buildProvenance,
 	}, nil
 }
@@ -175,6 +178,33 @@ func ValidateManifest(m *ManifestData, artifactDir string, measuredABI map[strin
 		}
 		if provenance.GeneratorVersion != m.TreeSitterVer {
 			validationErrors = append(validationErrors, fmt.Errorf("generator version mismatch for %q: manifest %s, measured provenance %s", binary.Filename, m.TreeSitterVer, provenance.GeneratorVersion))
+		}
+	}
+	if m.Artifacts.HasWasm && artifactDir != "" {
+		wasmFile := filepath.Join(artifactDir, fmt.Sprintf("tree-sitter-%s.wasm", m.Grammar))
+		wasmFileAlt := filepath.Join(artifactDir, fmt.Sprintf("tree-sitter-%s.wasm", filepath.Base(artifactDir)))
+		_, err1 := os.Stat(wasmFile)
+		_, err2 := os.Stat(wasmFileAlt)
+		if err1 != nil && err2 != nil {
+			validationErrors = append(validationErrors, fmt.Errorf("manifest declares has_wasm=true but wasm artifact missing in %s", artifactDir))
+		}
+	}
+	if m.Artifacts.HasCSource && artifactDir != "" {
+		parserC := filepath.Join(artifactDir, "src", "parser.c")
+		if _, err := os.Stat(parserC); err != nil {
+			validationErrors = append(validationErrors, fmt.Errorf("manifest declares has_c_source=true but %s missing: %w", parserC, err))
+		}
+	}
+	if m.Artifacts.HasJS && artifactDir != "" {
+		grammarJS := filepath.Join(artifactDir, "grammar.js")
+		if _, err := os.Stat(grammarJS); err != nil {
+			validationErrors = append(validationErrors, fmt.Errorf("manifest declares has_js=true but %s missing: %w", grammarJS, err))
+		}
+	}
+	if m.Artifacts.HasCompactNodeTypes && artifactDir != "" {
+		compactFile := filepath.Join(artifactDir, "compact-node-types.yaml")
+		if _, err := os.Stat(compactFile); err != nil {
+			validationErrors = append(validationErrors, fmt.Errorf("manifest declares has_compact_node_types=true but %s missing: %w", compactFile, err))
 		}
 	}
 	return errors.Join(validationErrors...)

@@ -7,6 +7,7 @@ import (
 	tsbuild "github.com/michaelbomholt665/go-tree-sitter/internal/tree-sitter/build"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -87,7 +88,7 @@ func TestMoverCopiesArtifactsGeneratesManifestAndCleans(t *testing.T) {
 	}
 
 	mover := tsbuild.NewMoverWithValidator(tsbuild.NewCleaner(), acceptingValidator{}, ioDiscard{}, ioDiscard{})
-	if err := mover.Move(context.Background(), cfg, ts.MoveRequest{Language: "python", Mode: ts.MoveModeBoth, Clean: true}); err != nil {
+	if err := mover.Move(context.Background(), cfg, ts.MoveRequest{Language: "python", Mode: ts.MoveModeBoth, Clean: true, GenerateManifest: true, CopySCM: true}); err != nil {
 		t.Fatalf("Move returned error: %v", err)
 	}
 
@@ -207,7 +208,7 @@ func TestMoverCopiesQueriesFromRepositoryRootForSubdirGrammar(t *testing.T) {
 	}
 
 	mover := tsbuild.NewMoverWithValidator(tsbuild.NewCleaner(), acceptingValidator{}, ioDiscard{}, ioDiscard{})
-	if err := mover.Move(context.Background(), cfg, ts.MoveRequest{Language: "tsx", Mode: ts.MoveModeBoth, Clean: true, Force: true}); err != nil {
+	if err := mover.Move(context.Background(), cfg, ts.MoveRequest{Language: "tsx", Mode: ts.MoveModeBoth, Clean: true, Force: true, GenerateManifest: true, CopySCM: true}); err != nil {
 		t.Fatalf("Move returned error: %v", err)
 	}
 
@@ -314,6 +315,8 @@ func TestMoverCrossPlatformPublishing(t *testing.T) {
 		Mode:                 ts.MoveModeBoth,
 		Clean:                true,
 		AllowCrossValidation: true,
+		GenerateManifest:     true,
+		CopySCM:              true,
 	}); err != nil {
 		t.Fatalf("Move failed: %v", err)
 	}
@@ -361,5 +364,796 @@ func TestMoverCrossPlatformPublishing(t *testing.T) {
 		if !platforms[expectedKey] {
 			t.Errorf("manifest missing binary for target %q", expectedKey)
 		}
+	}
+}
+
+func TestMoverWithoutManifest(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	buildDir := filepath.Join(dir, "build")
+	binDir := filepath.Join(buildDir, "python", "bin")
+	sourceDir := filepath.Join(buildDir, "python")
+
+	if err := os.MkdirAll(filepath.Join(sourceDir, "src"), 0o755); err != nil {
+		t.Fatalf("create source src dir: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(sourceDir, "queries"), 0o755); err != nil {
+		t.Fatalf("create queries dir: %v", err)
+	}
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatalf("create bin dir: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(sourceDir, "src", "node-types.json"), []byte(`{"node":"type"}`), 0o644); err != nil {
+		t.Fatalf("write node-types: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceDir, "queries", "highlights.scm"), []byte("(identifier)"), 0o644); err != nil {
+		t.Fatalf("write query: %v", err)
+	}
+	binPath := filepath.Join(binDir, "python-v0.25.0-linux-amd64.so")
+	if err := os.WriteFile(binPath, []byte("binary"), 0o644); err != nil {
+		t.Fatalf("write binary: %v", err)
+	}
+	writeBinaryProvenance(t, binPath, filepath.Join(sourceDir, "src", "node-types.json"))
+
+	cfg := &ts.Config{
+		Version:  "1.0",
+		BuildDir: buildDir,
+		Languages: []ts.Language{{
+			Name:              "python",
+			Grammar:           "python",
+			Constructor:       "tree_sitter_python",
+			Version:           "v0.25.0",
+			TreeSitterVersion: "0.25.0",
+			Repository:        "https://github.com/tree-sitter/tree-sitter-python.git",
+		}},
+		Output: ts.Output{GrammarBase: filepath.Join(dir, "out"), GenerateManifest: true},
+	}
+
+	mover := tsbuild.NewMoverWithValidator(tsbuild.NewCleaner(), acceptingValidator{}, ioDiscard{}, ioDiscard{})
+	if err := mover.Move(context.Background(), cfg, ts.MoveRequest{
+		Language:         "python",
+		Mode:             ts.MoveModeBoth,
+		Clean:            true,
+		GenerateManifest: false,
+		CopySCM:          true,
+	}); err != nil {
+		t.Fatalf("Move returned error: %v", err)
+	}
+
+	outputDir := filepath.Join(dir, "out", "python")
+	// Verify binary, node-types, and queries exist
+	for _, expected := range []string{
+		"python-v0.25.0-linux-amd64.so",
+		"node-types.json",
+		filepath.Join("queries", "highlights.scm"),
+	} {
+		if _, err := os.Stat(filepath.Join(outputDir, expected)); err != nil {
+			t.Fatalf("expected %q to exist: %v", expected, err)
+		}
+	}
+
+	// Verify manifest.json does NOT exist
+	if _, err := os.Stat(filepath.Join(outputDir, "manifest.json")); !os.IsNotExist(err) {
+		t.Fatalf("expected manifest.json to NOT exist when GenerateManifest=false, err=%v", err)
+	}
+}
+
+func TestMoverWithoutSCM(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	buildDir := filepath.Join(dir, "build")
+	binDir := filepath.Join(buildDir, "python", "bin")
+	sourceDir := filepath.Join(buildDir, "python")
+
+	if err := os.MkdirAll(filepath.Join(sourceDir, "src"), 0o755); err != nil {
+		t.Fatalf("create source src dir: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(sourceDir, "queries"), 0o755); err != nil {
+		t.Fatalf("create queries dir: %v", err)
+	}
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatalf("create bin dir: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(sourceDir, "src", "node-types.json"), []byte(`{"node":"type"}`), 0o644); err != nil {
+		t.Fatalf("write node-types: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceDir, "queries", "highlights.scm"), []byte("(identifier)"), 0o644); err != nil {
+		t.Fatalf("write query: %v", err)
+	}
+	binPath := filepath.Join(binDir, "python-v0.25.0-linux-amd64.so")
+	if err := os.WriteFile(binPath, []byte("binary"), 0o644); err != nil {
+		t.Fatalf("write binary: %v", err)
+	}
+	writeBinaryProvenance(t, binPath, filepath.Join(sourceDir, "src", "node-types.json"))
+
+	cfg := &ts.Config{
+		Version:  "1.0",
+		BuildDir: buildDir,
+		Languages: []ts.Language{{
+			Name:              "python",
+			Grammar:           "python",
+			Constructor:       "tree_sitter_python",
+			Version:           "v0.25.0",
+			TreeSitterVersion: "0.25.0",
+			Repository:        "https://github.com/tree-sitter/tree-sitter-python.git",
+		}},
+		Output: ts.Output{GrammarBase: filepath.Join(dir, "out"), GenerateManifest: true},
+	}
+
+	mover := tsbuild.NewMoverWithValidator(tsbuild.NewCleaner(), acceptingValidator{}, ioDiscard{}, ioDiscard{})
+	if err := mover.Move(context.Background(), cfg, ts.MoveRequest{
+		Language:         "python",
+		Mode:             ts.MoveModeBoth,
+		Clean:            true,
+		GenerateManifest: true,
+		CopySCM:          false,
+	}); err != nil {
+		t.Fatalf("Move returned error: %v", err)
+	}
+
+	outputDir := filepath.Join(dir, "out", "python")
+	// Verify binary, node-types, and manifest exist
+	for _, expected := range []string{
+		"python-v0.25.0-linux-amd64.so",
+		"node-types.json",
+		"manifest.json",
+	} {
+		if _, err := os.Stat(filepath.Join(outputDir, expected)); err != nil {
+			t.Fatalf("expected %q to exist: %v", expected, err)
+		}
+	}
+
+	// Verify queries directory does NOT exist
+	if _, err := os.Stat(filepath.Join(outputDir, "queries")); !os.IsNotExist(err) {
+		t.Fatalf("expected queries directory to NOT exist when CopySCM=false, err=%v", err)
+	}
+
+	// Verify manifest records HasQueries=false
+	manifestContent, err := os.ReadFile(filepath.Join(outputDir, "manifest.json"))
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	var manifest tsbuild.ManifestData
+	if err := json.Unmarshal(manifestContent, &manifest); err != nil {
+		t.Fatalf("unmarshal manifest: %v", err)
+	}
+	if manifest.Artifacts.HasQueries {
+		t.Fatalf("expected HasQueries to be false, got true")
+	}
+	if !manifest.Artifacts.HasNodeTypes {
+		t.Fatalf("expected HasNodeTypes to be true, got false")
+	}
+}
+
+func TestMoverWithoutManifestAndWithoutSCM(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	buildDir := filepath.Join(dir, "build")
+	binDir := filepath.Join(buildDir, "python", "bin")
+	sourceDir := filepath.Join(buildDir, "python")
+
+	if err := os.MkdirAll(filepath.Join(sourceDir, "src"), 0o755); err != nil {
+		t.Fatalf("create source src dir: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(sourceDir, "queries"), 0o755); err != nil {
+		t.Fatalf("create queries dir: %v", err)
+	}
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatalf("create bin dir: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(sourceDir, "src", "node-types.json"), []byte(`{"node":"type"}`), 0o644); err != nil {
+		t.Fatalf("write node-types: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceDir, "queries", "highlights.scm"), []byte("(identifier)"), 0o644); err != nil {
+		t.Fatalf("write query: %v", err)
+	}
+	binPath := filepath.Join(binDir, "python-v0.25.0-linux-amd64.so")
+	if err := os.WriteFile(binPath, []byte("binary"), 0o644); err != nil {
+		t.Fatalf("write binary: %v", err)
+	}
+	writeBinaryProvenance(t, binPath, filepath.Join(sourceDir, "src", "node-types.json"))
+
+	cfg := &ts.Config{
+		Version:  "1.0",
+		BuildDir: buildDir,
+		Languages: []ts.Language{{
+			Name:              "python",
+			Grammar:           "python",
+			Constructor:       "tree_sitter_python",
+			Version:           "v0.25.0",
+			TreeSitterVersion: "0.25.0",
+			Repository:        "https://github.com/tree-sitter/tree-sitter-python.git",
+		}},
+		Output: ts.Output{GrammarBase: filepath.Join(dir, "out"), GenerateManifest: true},
+	}
+
+	mover := tsbuild.NewMoverWithValidator(tsbuild.NewCleaner(), acceptingValidator{}, ioDiscard{}, ioDiscard{})
+	if err := mover.Move(context.Background(), cfg, ts.MoveRequest{
+		Language:         "python",
+		Mode:             ts.MoveModeBoth,
+		Clean:            true,
+		GenerateManifest: false,
+		CopySCM:          false,
+	}); err != nil {
+		t.Fatalf("Move returned error: %v", err)
+	}
+
+	outputDir := filepath.Join(dir, "out", "python")
+	// Verify binary and node-types exist
+	for _, expected := range []string{
+		"python-v0.25.0-linux-amd64.so",
+		"node-types.json",
+	} {
+		if _, err := os.Stat(filepath.Join(outputDir, expected)); err != nil {
+			t.Fatalf("expected %q to exist: %v", expected, err)
+		}
+	}
+
+	// Neither queries nor manifest should exist
+	if _, err := os.Stat(filepath.Join(outputDir, "queries")); !os.IsNotExist(err) {
+		t.Fatalf("expected queries directory to NOT exist")
+	}
+	if _, err := os.Stat(filepath.Join(outputDir, "manifest.json")); !os.IsNotExist(err) {
+		t.Fatalf("expected manifest.json to NOT exist")
+	}
+}
+
+func setupLanguageBuildDir(t *testing.T, dir, langName, version string) (string, string) {
+	t.Helper()
+	buildDir := filepath.Join(dir, "build")
+	sourceDir := filepath.Join(buildDir, langName)
+	binDir := filepath.Join(sourceDir, "bin")
+
+	if err := os.MkdirAll(filepath.Join(sourceDir, "src", "tree_sitter"), 0o755); err != nil {
+		t.Fatalf("create src dir: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(sourceDir, "queries"), 0o755); err != nil {
+		t.Fatalf("create queries dir: %v", err)
+	}
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatalf("create bin dir: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(sourceDir, "src", "node-types.json"), []byte(`{"node":"type"}`), 0o644); err != nil {
+		t.Fatalf("write node-types: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceDir, "queries", "highlights.scm"), []byte("(identifier)"), 0o644); err != nil {
+		t.Fatalf("write query: %v", err)
+	}
+	binFile := filepath.Join(binDir, langName+"-"+version+"-linux-amd64.so")
+	if err := os.WriteFile(binFile, []byte("binary"), 0o644); err != nil {
+		t.Fatalf("write binary: %v", err)
+	}
+	writeBinaryProvenance(t, binFile, filepath.Join(sourceDir, "src", "node-types.json"))
+
+	return buildDir, sourceDir
+}
+
+func TestMoverPreservesCSource(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	buildDir, sourceDir := setupLanguageBuildDir(t, dir, "python", "v0.25.0")
+
+	// Add parser.c, scanner.c, and headers in src/
+	srcDir := filepath.Join(sourceDir, "src")
+	if err := os.WriteFile(filepath.Join(srcDir, "parser.c"), []byte("/* parser.c */"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(srcDir, "scanner.c"), []byte("/* scanner.c */"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(srcDir, "tree_sitter", "parser.h"), []byte("/* parser.h */"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(srcDir, "tree_sitter", "alloc.h"), []byte("/* alloc.h */"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &ts.Config{
+		Version:  "1.0",
+		BuildDir: buildDir,
+		ABIVersions: map[string]ts.ABIRange{
+			">=0.25": {Min: 13, Max: 15},
+		},
+		Languages: []ts.Language{{
+			Name:              "python",
+			Grammar:           "python",
+			Constructor:       "tree_sitter_python",
+			Version:           "v0.25.0",
+			TreeSitterVersion: "0.25.0",
+			Repository:        "https://github.com/tree-sitter/tree-sitter-python.git",
+		}},
+		Output: ts.Output{GrammarBase: filepath.Join(dir, "out"), GenerateManifest: true},
+	}
+
+	mover := tsbuild.NewMoverWithValidator(tsbuild.NewCleaner(), acceptingValidator{}, ioDiscard{}, ioDiscard{})
+	if err := mover.Move(context.Background(), cfg, ts.MoveRequest{
+		Language:         "python",
+		Mode:             ts.MoveModeBoth,
+		Clean:            false,
+		GenerateManifest: true,
+		CopySCM:          true,
+		CopySource:       true,
+	}); err != nil {
+		t.Fatalf("Move returned error: %v", err)
+	}
+
+	outDir := filepath.Join(dir, "out", "python")
+	for _, expected := range []string{
+		filepath.Join("src", "parser.c"),
+		filepath.Join("src", "scanner.c"),
+		filepath.Join("src", "tree_sitter", "parser.h"),
+		filepath.Join("src", "tree_sitter", "alloc.h"),
+	} {
+		if _, err := os.Stat(filepath.Join(outDir, expected)); err != nil {
+			t.Errorf("expected source file %q to exist: %v", expected, err)
+		}
+	}
+
+	manifestContent, err := os.ReadFile(filepath.Join(outDir, "manifest.json"))
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	var manifest tsbuild.ManifestData
+	if err := json.Unmarshal(manifestContent, &manifest); err != nil {
+		t.Fatalf("unmarshal manifest: %v", err)
+	}
+	if !manifest.Artifacts.HasCSource {
+		t.Errorf("expected has_c_source to be true, got %+v", manifest.Artifacts)
+	}
+	if manifest.Artifacts.HasJS || manifest.Artifacts.HasWasm {
+		t.Errorf("unexpected artifact flags: %+v", manifest.Artifacts)
+	}
+}
+
+func TestMoverPreservesGrammarJS(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	buildDir, sourceDir := setupLanguageBuildDir(t, dir, "python", "v0.25.0")
+
+	if err := os.WriteFile(filepath.Join(sourceDir, "grammar.js"), []byte("module.exports = grammar({});"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &ts.Config{
+		Version:  "1.0",
+		BuildDir: buildDir,
+		ABIVersions: map[string]ts.ABIRange{
+			">=0.25": {Min: 13, Max: 15},
+		},
+		Languages: []ts.Language{{
+			Name:              "python",
+			Grammar:           "python",
+			Constructor:       "tree_sitter_python",
+			Version:           "v0.25.0",
+			TreeSitterVersion: "0.25.0",
+			Repository:        "https://github.com/tree-sitter/tree-sitter-python.git",
+		}},
+		Output: ts.Output{GrammarBase: filepath.Join(dir, "out"), GenerateManifest: true},
+	}
+
+	mover := tsbuild.NewMoverWithValidator(tsbuild.NewCleaner(), acceptingValidator{}, ioDiscard{}, ioDiscard{})
+	if err := mover.Move(context.Background(), cfg, ts.MoveRequest{
+		Language:         "python",
+		Mode:             ts.MoveModeBoth,
+		Clean:            false,
+		GenerateManifest: true,
+		CopySCM:          true,
+		CopyJS:           true,
+	}); err != nil {
+		t.Fatalf("Move returned error: %v", err)
+	}
+
+	outDir := filepath.Join(dir, "out", "python")
+	grammarPath := filepath.Join(outDir, "grammar.js")
+	if _, err := os.Stat(grammarPath); err != nil {
+		t.Errorf("expected grammar.js to exist: %v", err)
+	}
+
+	manifestContent, err := os.ReadFile(filepath.Join(outDir, "manifest.json"))
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	var manifest tsbuild.ManifestData
+	if err := json.Unmarshal(manifestContent, &manifest); err != nil {
+		t.Fatalf("unmarshal manifest: %v", err)
+	}
+	if !manifest.Artifacts.HasJS {
+		t.Errorf("expected has_js to be true, got %+v", manifest.Artifacts)
+	}
+	if manifest.Artifacts.HasCSource || manifest.Artifacts.HasWasm {
+		t.Errorf("unexpected artifact flags: %+v", manifest.Artifacts)
+	}
+}
+
+func TestMoverPreservesWasm(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	buildDir, sourceDir := setupLanguageBuildDir(t, dir, "python", "v0.25.0")
+
+	wasmFile := filepath.Join(sourceDir, "tree-sitter-python.wasm")
+	if err := os.WriteFile(wasmFile, []byte("\x00asm\x01\x00\x00\x00wasmbinary"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &ts.Config{
+		Version:  "1.0",
+		BuildDir: buildDir,
+		ABIVersions: map[string]ts.ABIRange{
+			">=0.25": {Min: 13, Max: 15},
+		},
+		Languages: []ts.Language{{
+			Name:              "python",
+			Grammar:           "python",
+			Constructor:       "tree_sitter_python",
+			Version:           "v0.25.0",
+			TreeSitterVersion: "0.25.0",
+			Repository:        "https://github.com/tree-sitter/tree-sitter-python.git",
+		}},
+		Output: ts.Output{GrammarBase: filepath.Join(dir, "out"), GenerateManifest: true},
+	}
+
+	mover := tsbuild.NewMoverWithValidator(tsbuild.NewCleaner(), acceptingValidator{}, ioDiscard{}, ioDiscard{})
+	if err := mover.Move(context.Background(), cfg, ts.MoveRequest{
+		Language:         "python",
+		Mode:             ts.MoveModeBoth,
+		Clean:            false,
+		GenerateManifest: true,
+		CopySCM:          true,
+		IncludeWasm:      true,
+	}); err != nil {
+		t.Fatalf("Move returned error: %v", err)
+	}
+
+	outDir := filepath.Join(dir, "out", "python")
+	targetWasm := filepath.Join(outDir, "tree-sitter-python.wasm")
+	if _, err := os.Stat(targetWasm); err != nil {
+		t.Errorf("expected tree-sitter-python.wasm to exist: %v", err)
+	}
+
+	manifestContent, err := os.ReadFile(filepath.Join(outDir, "manifest.json"))
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	var manifest tsbuild.ManifestData
+	if err := json.Unmarshal(manifestContent, &manifest); err != nil {
+		t.Fatalf("unmarshal manifest: %v", err)
+	}
+	if !manifest.Artifacts.HasWasm {
+		t.Errorf("expected has_wasm to be true, got %+v", manifest.Artifacts)
+	}
+}
+
+func TestMoverPreservesAllArtifactsTogether(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	buildDir, sourceDir := setupLanguageBuildDir(t, dir, "python", "v0.25.0")
+
+	srcDir := filepath.Join(sourceDir, "src")
+	if err := os.WriteFile(filepath.Join(srcDir, "parser.c"), []byte("/* parser */"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(srcDir, "tree_sitter", "parser.h"), []byte("/* header */"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceDir, "grammar.js"), []byte("module.exports = {};"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceDir, "tree-sitter-python.wasm"), []byte("\x00asm\x01\x00\x00\x00"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &ts.Config{
+		Version:  "1.0",
+		BuildDir: buildDir,
+		ABIVersions: map[string]ts.ABIRange{
+			">=0.25": {Min: 13, Max: 15},
+		},
+		Languages: []ts.Language{{
+			Name:              "python",
+			Grammar:           "python",
+			Constructor:       "tree_sitter_python",
+			Version:           "v0.25.0",
+			TreeSitterVersion: "0.25.0",
+			Repository:        "https://github.com/tree-sitter/tree-sitter-python.git",
+		}},
+		Output: ts.Output{GrammarBase: filepath.Join(dir, "out"), GenerateManifest: true},
+	}
+
+	mover := tsbuild.NewMoverWithValidator(tsbuild.NewCleaner(), acceptingValidator{}, ioDiscard{}, ioDiscard{})
+	if err := mover.Move(context.Background(), cfg, ts.MoveRequest{
+		Language:         "python",
+		Mode:             ts.MoveModeBoth,
+		Clean:            false,
+		GenerateManifest: true,
+		CopySCM:          true,
+		CopySource:       true,
+		CopyJS:           true,
+		IncludeWasm:      true,
+	}); err != nil {
+		t.Fatalf("Move returned error: %v", err)
+	}
+
+	outDir := filepath.Join(dir, "out", "python")
+	for _, expected := range []string{
+		"python-v0.25.0-linux-amd64.so",
+		"node-types.json",
+		filepath.Join("queries", "highlights.scm"),
+		"manifest.json",
+		filepath.Join("src", "parser.c"),
+		filepath.Join("src", "tree_sitter", "parser.h"),
+		"grammar.js",
+		"tree-sitter-python.wasm",
+	} {
+		if _, err := os.Stat(filepath.Join(outDir, expected)); err != nil {
+			t.Errorf("expected %q to exist: %v", expected, err)
+		}
+	}
+
+	manifestContent, err := os.ReadFile(filepath.Join(outDir, "manifest.json"))
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	var manifest tsbuild.ManifestData
+	if err := json.Unmarshal(manifestContent, &manifest); err != nil {
+		t.Fatalf("unmarshal manifest: %v", err)
+	}
+	if !manifest.Artifacts.HasNodeTypes || !manifest.Artifacts.HasQueries ||
+		!manifest.Artifacts.HasWasm || !manifest.Artifacts.HasCSource || !manifest.Artifacts.HasJS {
+		t.Errorf("expected all artifact flags to be true, got %+v", manifest.Artifacts)
+	}
+}
+
+func TestMoverFailsWhenRequestedArtifactMissing(t *testing.T) {
+	t.Parallel()
+
+	cfgFor := func(dir, buildDir string) *ts.Config {
+		return &ts.Config{
+			Version:  "1.0",
+			BuildDir: buildDir,
+			ABIVersions: map[string]ts.ABIRange{
+				">=0.25": {Min: 13, Max: 15},
+			},
+			Languages: []ts.Language{{
+				Name:              "python",
+				Grammar:           "python",
+				Constructor:       "tree_sitter_python",
+				Version:           "v0.25.0",
+				TreeSitterVersion: "0.25.0",
+				Repository:        "https://github.com/tree-sitter/tree-sitter-python.git",
+			}},
+			Output: ts.Output{GrammarBase: filepath.Join(dir, "out"), GenerateManifest: true},
+		}
+	}
+
+	// Missing wasm
+	t.Run("MissingWasm", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		buildDir, _ := setupLanguageBuildDir(t, dir, "python", "v0.25.0")
+		mover := tsbuild.NewMoverWithValidator(tsbuild.NewCleaner(), acceptingValidator{}, ioDiscard{}, ioDiscard{})
+		err := mover.Move(context.Background(), cfgFor(dir, buildDir), ts.MoveRequest{
+			Language:    "python",
+			IncludeWasm: true,
+		})
+		if err == nil {
+			t.Errorf("expected error when wasm artifact missing")
+		}
+	})
+
+	// Missing parser.c when CopySource is true
+	t.Run("MissingParserC", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		buildDir, _ := setupLanguageBuildDir(t, dir, "python", "v0.25.0")
+		mover := tsbuild.NewMoverWithValidator(tsbuild.NewCleaner(), acceptingValidator{}, ioDiscard{}, ioDiscard{})
+		err := mover.Move(context.Background(), cfgFor(dir, buildDir), ts.MoveRequest{
+			Language:   "python",
+			CopySource: true,
+		})
+		if err == nil {
+			t.Errorf("expected error when parser.c missing")
+		}
+	})
+
+	// Missing grammar.js when CopyJS is true
+	t.Run("MissingGrammarJS", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		buildDir, _ := setupLanguageBuildDir(t, dir, "python", "v0.25.0")
+		mover := tsbuild.NewMoverWithValidator(tsbuild.NewCleaner(), acceptingValidator{}, ioDiscard{}, ioDiscard{})
+		err := mover.Move(context.Background(), cfgFor(dir, buildDir), ts.MoveRequest{
+			Language: "python",
+			CopyJS:   true,
+		})
+		if err == nil {
+			t.Errorf("expected error when grammar.js missing")
+		}
+	})
+}
+
+func TestMoverCompactGeneratesAndStagesCompactNodeTypes(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	buildDir, sourceDir := setupLanguageBuildDir(t, dir, "python", "v0.25.0")
+
+	// Overwrite node-types.json with a valid JSON array
+	validNodeTypes := []byte(`[
+		{"type": "identifier", "named": true},
+		{"type": "binary_expression", "named": true, "fields": {"left": {"multiple": false, "required": true, "types": [{"type": "identifier", "named": true}]}}}
+	]`)
+	nodeTypesPath := filepath.Join(sourceDir, "src", "node-types.json")
+	if err := os.WriteFile(nodeTypesPath, validNodeTypes, 0o644); err != nil {
+		t.Fatalf("write valid node-types: %v", err)
+	}
+	binFile := filepath.Join(sourceDir, "bin", "python-v0.25.0-linux-amd64.so")
+	writeBinaryProvenance(t, binFile, nodeTypesPath)
+
+	outDir := filepath.Join(dir, "out")
+	cfg := &ts.Config{
+		Version:  "1.0",
+		BuildDir: buildDir,
+		Languages: []ts.Language{{
+			Name:              "python",
+			Grammar:           "python",
+			Constructor:       "tree_sitter_python",
+			Version:           "v0.25.0",
+			TreeSitterVersion: "0.25.0",
+			Repository:        "https://github.com/tree-sitter/tree-sitter-python.git",
+		}},
+		Output: ts.Output{GrammarBase: outDir, GenerateManifest: true},
+	}
+
+	mover := tsbuild.NewMoverWithValidator(tsbuild.NewCleaner(), acceptingValidator{}, ioDiscard{}, ioDiscard{})
+	err := mover.Move(context.Background(), cfg, ts.MoveRequest{
+		Language:         "python",
+		Compact:          true,
+		GenerateManifest: true,
+	})
+	if err != nil {
+		t.Fatalf("Move with Compact=true failed: %v", err)
+	}
+
+	outputLangDir := filepath.Join(outDir, "python")
+	// Verify compact-node-types.yaml exists
+	compactBytes, err := os.ReadFile(filepath.Join(outputLangDir, "compact-node-types.yaml"))
+	if err != nil {
+		t.Fatalf("expected compact-node-types.yaml to exist: %v", err)
+	}
+	if !strings.Contains(string(compactBytes), "binary_expression:") {
+		t.Errorf("expected compact YAML to contain binary_expression, got: %s", string(compactBytes))
+	}
+
+	// Verify node-types.json is still intact
+	if _, err := os.Stat(filepath.Join(outputLangDir, "node-types.json")); err != nil {
+		t.Fatalf("expected node-types.json to exist alongside compact-node-types.yaml: %v", err)
+	}
+
+	// Verify manifest.json records has_compact_node_types=true
+	manifestContent, err := os.ReadFile(filepath.Join(outputLangDir, "manifest.json"))
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	var manifest tsbuild.ManifestData
+	if err := json.Unmarshal(manifestContent, &manifest); err != nil {
+		t.Fatalf("unmarshal manifest: %v", err)
+	}
+	if !manifest.Artifacts.HasCompactNodeTypes {
+		t.Errorf("expected HasCompactNodeTypes=true, got: %+v", manifest.Artifacts)
+	}
+}
+
+func TestMoverCompactFailsOnInvalidRawJSON(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	buildDir, sourceDir := setupLanguageBuildDir(t, dir, "python", "v0.25.0")
+
+	// node-types.json is {"node":"type"} (object, not array) which will fail compact generator
+	binFile := filepath.Join(sourceDir, "bin", "python-v0.25.0-linux-amd64.so")
+	writeBinaryProvenance(t, binFile, filepath.Join(sourceDir, "src", "node-types.json"))
+
+	cfg := &ts.Config{
+		Version:  "1.0",
+		BuildDir: buildDir,
+		Languages: []ts.Language{{
+			Name:              "python",
+			Grammar:           "python",
+			Constructor:       "tree_sitter_python",
+			Version:           "v0.25.0",
+			TreeSitterVersion: "0.25.0",
+			Repository:        "https://github.com/tree-sitter/tree-sitter-python.git",
+		}},
+		Output: ts.Output{GrammarBase: filepath.Join(dir, "out"), GenerateManifest: true},
+	}
+
+	mover := tsbuild.NewMoverWithValidator(tsbuild.NewCleaner(), acceptingValidator{}, ioDiscard{}, ioDiscard{})
+	err := mover.Move(context.Background(), cfg, ts.MoveRequest{
+		Language: "python",
+		Compact:  true,
+	})
+	if err == nil {
+		t.Fatalf("expected error when compact generation fails on invalid JSON, got nil")
+	}
+}
+
+func TestMoverCheckCompactValidatesExisting(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	buildDir, sourceDir := setupLanguageBuildDir(t, dir, "python", "v0.25.0")
+
+	validNodeTypes := []byte(`[{"type": "identifier", "named": true}]`)
+	nodeTypesPath := filepath.Join(sourceDir, "src", "node-types.json")
+	if err := os.WriteFile(nodeTypesPath, validNodeTypes, 0o644); err != nil {
+		t.Fatalf("write valid node-types: %v", err)
+	}
+	binFile := filepath.Join(sourceDir, "bin", "python-v0.25.0-linux-amd64.so")
+	writeBinaryProvenance(t, binFile, nodeTypesPath)
+
+	outDir := filepath.Join(dir, "out")
+	cfg := &ts.Config{
+		Version:  "1.0",
+		BuildDir: buildDir,
+		Languages: []ts.Language{{
+			Name:              "python",
+			Grammar:           "python",
+			Constructor:       "tree_sitter_python",
+			Version:           "v0.25.0",
+			TreeSitterVersion: "0.25.0",
+			Repository:        "https://github.com/tree-sitter/tree-sitter-python.git",
+		}},
+		Output: ts.Output{GrammarBase: outDir, GenerateManifest: true},
+	}
+
+	mover := tsbuild.NewMoverWithValidator(tsbuild.NewCleaner(), acceptingValidator{}, ioDiscard{}, ioDiscard{})
+
+	// 1. Missing compact-node-types.yaml -> should fail
+	err := mover.Move(context.Background(), cfg, ts.MoveRequest{
+		Language:     "python",
+		CheckCompact: true,
+	})
+	if err == nil {
+		t.Fatalf("expected error for missing compact-node-types.yaml, got nil")
+	}
+
+	// 2. Put valid compact-node-types.yaml into sourceDir
+	compactYAML, err := tsbuild.CompactNodeTypes(validNodeTypes)
+	if err != nil {
+		t.Fatalf("generate compact: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceDir, "compact-node-types.yaml"), compactYAML, 0o644); err != nil {
+		t.Fatalf("write compact-node-types.yaml: %v", err)
+	}
+
+	err = mover.Move(context.Background(), cfg, ts.MoveRequest{
+		Language:     "python",
+		CheckCompact: true,
+	})
+	if err != nil {
+		t.Fatalf("Move with CheckCompact=true failed unexpectedly: %v", err)
+	}
+
+	// 3. Corrupt compact-node-types.yaml -> should fail
+	if err := os.WriteFile(filepath.Join(sourceDir, "compact-node-types.yaml"), []byte("supertypes:\n\nnodes:\n  bad: {}\n"), 0o644); err != nil {
+		t.Fatalf("write bad compact: %v", err)
+	}
+	err = mover.Move(context.Background(), cfg, ts.MoveRequest{
+		Language:     "python",
+		CheckCompact: true,
+	})
+	if err == nil {
+		t.Fatalf("expected CheckCompact to fail on discrepancy, got nil")
 	}
 }

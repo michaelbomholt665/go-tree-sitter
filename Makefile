@@ -2,10 +2,13 @@ TREE_SITTER         ?= tree-sitter
 TREE_SITTER_VERSION ?= 0.26.8
 NPM                 ?= npm
 CONFIG              ?= tree-sitter-config.yaml
+LANG                ?=
+LANGUAGE            ?=
+LANG_ARG            ?= $(if $(LANG),-l $(LANG),$(if $(LANGUAGE),-l $(LANGUAGE),))
 
 .PHONY: help build sync-config sync-config-apply \
-        grammar-build \
-        compile compile-linux compile-windows compile-mac compile-all \
+        grammar-build build-all \
+        compile compile-wasm compile-linux compile-windows compile-mac compile-all \
         move \
         release release-linux release-windows release-mac release-all \
         test fmt vet lint tool-help \
@@ -19,15 +22,18 @@ help:
 	@echo ""
 	@echo "Available commands:"
 	@echo "  make build                  Build the Go packages and CLI"
+	@echo "  make build-all              Full pipeline for host: build, compile, compact, move & clean build cache"
+	@echo "                              (Supports LANG=<name>, e.g. make build-all LANG=python)"
 	@echo "  make grammar-build          Clone/generate grammar sources (run once before compiling)"
 	@echo ""
 	@echo "  make compile                Compile for the default target (OS_TARGET in config)"
+	@echo "  make compile-wasm           Compile WebAssembly parser (.wasm)"
 	@echo "  make compile-linux          Compile for Linux amd64"
 	@echo "  make compile-windows        Compile for Windows amd64"
 	@echo "  make compile-mac            Compile for macOS amd64 + arm64"
 	@echo "  make compile-all            Compile for all platforms"
 	@echo ""
-	@echo "  make move                   Publish artifacts to data/tree-sitter/grammar/, update manifest.json"
+	@echo "  make move                   Publish artifacts to data/tree-sitter/grammar/, generate compact node types"
 	@echo ""
 	@echo "  make release                Full pipeline for the default target (grammar-build + compile + move)"
 	@echo "  make release-linux          Full pipeline for Linux amd64"
@@ -82,31 +88,36 @@ build:
 # ── Grammar source generation (platform-independent) ─────────────────────────
 
 grammar-build: check-tree-sitter
-	go run ./cmd/ts-build build --config $(CONFIG)
+	go run ./cmd/ts-build build --config $(CONFIG) $(LANG_ARG)
 
 # ── Compile ───────────────────────────────────────────────────────────────────
 
 compile: check-tree-sitter
-	go run ./cmd/ts-build compile --config $(CONFIG)
+	go run ./cmd/ts-build compile --config $(CONFIG) $(LANG_ARG)
+
+compile-wasm: check-tree-sitter
+	go run ./cmd/ts-build compile --config $(CONFIG) --wasm $(LANG_ARG)
 
 compile-linux: check-tree-sitter
-	go run ./cmd/ts-build compile --config $(CONFIG) --os linux --arch amd64
+	go run ./cmd/ts-build compile --config $(CONFIG) --os linux --arch amd64 $(LANG_ARG)
 
 compile-windows: check-tree-sitter
-	go run ./cmd/ts-build compile --config $(CONFIG) --os windows --arch amd64
+	go run ./cmd/ts-build compile --config $(CONFIG) --os windows --arch amd64 $(LANG_ARG)
 
 compile-mac: check-tree-sitter
-	go run ./cmd/ts-build compile --config $(CONFIG) --os macos --arch amd64
-	go run ./cmd/ts-build compile --config $(CONFIG) --os macos --arch arm64
+	go run ./cmd/ts-build compile --config $(CONFIG) --os macos --arch amd64 $(LANG_ARG)
+	go run ./cmd/ts-build compile --config $(CONFIG) --os macos --arch arm64 $(LANG_ARG)
 
 compile-all: compile-linux compile-windows compile-mac
 
 # ── Move / publish ────────────────────────────────────────────────────────────
 
 move:
-	go run ./cmd/ts-build move --config $(CONFIG) --force
+	go run ./cmd/ts-build move --config $(CONFIG) --compact --force $(LANG_ARG)
 
 # ── Release pipelines ─────────────────────────────────────────────────────────
+
+build-all: check-tree-sitter grammar-build compile move
 
 release: check-tree-sitter grammar-build compile move
 

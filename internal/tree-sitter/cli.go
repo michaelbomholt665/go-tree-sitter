@@ -28,6 +28,7 @@ const (
 type BuildRequest struct {
 	Language string
 	Force    bool
+	Prune    bool
 }
 
 type CompileRequest struct {
@@ -36,6 +37,7 @@ type CompileRequest struct {
 	Arch                  string
 	AllowCrossValidation  bool
 	StaticCrossValidation bool
+	BuildWasm             bool
 }
 
 type MoveRequest struct {
@@ -45,6 +47,23 @@ type MoveRequest struct {
 	Force                 bool
 	AllowCrossValidation  bool
 	StaticCrossValidation bool
+	GenerateManifest      bool
+	CopySCM               bool
+	CopySource            bool
+	CopyJS                bool
+	IncludeWasm           bool
+	Compact               bool
+	CheckCompact          bool
+}
+
+type CleanRequest struct {
+	Language string
+	Prune    bool
+}
+
+type CompactRequest struct {
+	Language string
+	Check    bool
 }
 
 type Builder interface {
@@ -57,6 +76,14 @@ type Compiler interface {
 
 type Mover interface {
 	Move(context.Context, *Config, MoveRequest) error
+}
+
+type Cleaner interface {
+	Clean(context.Context, *Config, CleanRequest) error
+}
+
+type Compactor interface {
+	Compact(context.Context, *Config, CompactRequest) error
 }
 
 type ConfigLoader func(string) (*Config, error)
@@ -74,13 +101,15 @@ func (OSPathLookup) LookPath(name string) (string, error) {
 // ─── App ─────────────────────────────────────────────────────────────────────
 
 type App struct {
-	stdout   io.Writer
-	stderr   io.Writer
-	lookup   PathLookup
-	load     ConfigLoader
-	builder  Builder
-	compiler Compiler
-	mover    Mover
+	stdout    io.Writer
+	stderr    io.Writer
+	lookup    PathLookup
+	load      ConfigLoader
+	builder   Builder
+	compiler  Compiler
+	mover     Mover
+	cleaner   Cleaner
+	compactor Compactor
 }
 
 func NewApp(stdout, stderr io.Writer, lookup PathLookup, load ConfigLoader, builder Builder, compiler Compiler, mover Mover) *App {
@@ -106,6 +135,16 @@ func NewApp(stdout, stderr io.Writer, lookup PathLookup, load ConfigLoader, buil
 		compiler: compiler,
 		mover:    mover,
 	}
+}
+
+func (a *App) WithCleaner(cleaner Cleaner) *App {
+	a.cleaner = cleaner
+	return a
+}
+
+func (a *App) WithCompactor(compactor Compactor) *App {
+	a.compactor = compactor
+	return a
 }
 
 // Run executes the Cobra command tree with the supplied argument slice.
@@ -156,6 +195,8 @@ Use --quiet to silence all non-error output.`,
 		a.buildCmd(&configPath, &verbose, makeReporter),
 		a.compileCmd(&configPath, &verbose, makeReporter),
 		a.moveCmd(&configPath, &verbose, makeReporter),
+		a.cleanCmd(&configPath, &verbose, makeReporter),
+		a.compactCmd(&configPath, &verbose, makeReporter),
 		&cobra.Command{
 			Use:   "version",
 			Short: "Print the version of ts-build",
@@ -174,6 +215,7 @@ Use --quiet to silence all non-error output.`,
 func (a *App) buildCmd(configPath *string, verbose *bool, makeReporter func() Reporter) *cobra.Command {
 	var language string
 	var force bool
+	var prune bool
 
 	cmd := &cobra.Command{
 		Use:   "build",
@@ -192,12 +234,14 @@ func (a *App) buildCmd(configPath *string, verbose *bool, makeReporter func() Re
 			return a.builder.Build(cmd.Context(), cfg, BuildRequest{
 				Language: language,
 				Force:    force,
+				Prune:    prune,
 			})
 		},
 	}
 
 	cmd.Flags().StringVarP(&language, "language", "l", "", "Only build the specified language.")
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "Re-clone existing repositories before building.")
+	cmd.Flags().BoolVar(&prune, "prune", false, "Prune build cache (.git, test corpus, etc.) after building.")
 
 	// Suppress the unused parameter warning – makeReporter / verbose are used
 	// by builder/compiler/mover once they consume the Reporter interface.
@@ -215,6 +259,7 @@ func (a *App) compileCmd(configPath *string, verbose *bool, makeReporter func() 
 	var targetArch string
 	var allowCrossValidation bool
 	var staticCrossValidation bool
+	var wasmFlag bool
 
 	cmd := &cobra.Command{
 		Use:   "compile",
@@ -236,6 +281,7 @@ func (a *App) compileCmd(configPath *string, verbose *bool, makeReporter func() 
 				Arch:                  targetArch,
 				AllowCrossValidation:  allowCrossValidation || staticCrossValidation,
 				StaticCrossValidation: staticCrossValidation,
+				BuildWasm:             wasmFlag,
 			})
 		},
 	}
@@ -245,6 +291,7 @@ func (a *App) compileCmd(configPath *string, verbose *bool, makeReporter func() 
 	cmd.Flags().StringVarP(&targetArch, "arch", "a", "", "Target architecture (amd64, arm64).")
 	cmd.Flags().BoolVar(&allowCrossValidation, "allow-cross-validation", false, "Allow cross-platform static validation for non-host binaries.")
 	cmd.Flags().BoolVar(&staticCrossValidation, "static-cross-validation", false, "Alias for --allow-cross-validation.")
+	cmd.Flags().BoolVar(&wasmFlag, "wasm", false, "Build WebAssembly (WASM) parser artifact.")
 
 	_ = verbose
 	_ = makeReporter
@@ -257,12 +304,21 @@ func (a *App) compileCmd(configPath *string, verbose *bool, makeReporter func() 
 func (a *App) moveCmd(configPath *string, verbose *bool, makeReporter func() Reporter) *cobra.Command {
 	var language string
 	var jsonMode bool
-	var scmMode bool
+	var scmFlag bool
+	var noSCM bool
 	var bothMode bool
+	var manifestFlag bool
+	var noManifest bool
 	var clean bool
 	var force bool
 	var allowCrossValidation bool
 	var staticCrossValidation bool
+	var sourceFlag bool
+	var cSourceFlag bool
+	var jsFlag bool
+	var wasmFlag bool
+	var compactFlag bool
+	var checkCompactFlag bool
 
 	cmd := &cobra.Command{
 		Use:   "move",
@@ -275,10 +331,39 @@ func (a *App) moveCmd(configPath *string, verbose *bool, makeReporter func() Rep
 			if err != nil {
 				return err
 			}
-			mode, err := ResolveMoveMode(jsonMode, scmMode, bothMode, cfg.Output.DefaultMoveMode)
-			if err != nil {
-				return err
+
+			if noManifest {
+				manifestFlag = false
 			}
+			if noSCM {
+				scmFlag = false
+			}
+
+			// In legacy usage, --scm was a mutually exclusive mode flag alongside --json and --both.
+			// When --scm is explicitly passed as true (or bare --scm), it acts as legacy scmMode
+			// if other mode flags are checked.
+			scmModeForLegacy := cmd.Flags().Changed("scm") && scmFlag
+			var mode MoveMode
+			if jsonMode || bothMode || scmModeForLegacy {
+				mode, err = ParseMoveMode(jsonMode, scmModeForLegacy, bothMode)
+				if err != nil {
+					return err
+				}
+			} else {
+				mode, err = ParseConfiguredMoveMode(cfg.Output.DefaultMoveMode)
+				if err != nil {
+					return err
+				}
+			}
+
+			// Resolve CopySCM: explicit --scm / --no-scm flag takes precedence over move mode.
+			copySCM := mode.IncludesQueries()
+			if cmd.Flags().Changed("scm") || noSCM {
+				copySCM = scmFlag
+			}
+
+			copySource := sourceFlag || cSourceFlag
+
 			return a.mover.Move(cmd.Context(), cfg, MoveRequest{
 				Language:              language,
 				Mode:                  mode,
@@ -286,18 +371,106 @@ func (a *App) moveCmd(configPath *string, verbose *bool, makeReporter func() Rep
 				Force:                 force,
 				AllowCrossValidation:  allowCrossValidation || staticCrossValidation,
 				StaticCrossValidation: staticCrossValidation,
+				GenerateManifest:      manifestFlag,
+				CopySCM:               copySCM,
+				CopySource:            copySource,
+				CopyJS:                jsFlag,
+				IncludeWasm:           wasmFlag,
+				Compact:               compactFlag,
+				CheckCompact:          checkCompactFlag,
 			})
 		},
 	}
 
 	cmd.Flags().StringVarP(&language, "language", "l", "", "Only move the specified language.")
 	cmd.Flags().BoolVar(&jsonMode, "json", false, "Move binaries and node-types.json only.")
-	cmd.Flags().BoolVar(&scmMode, "scm", false, "Move binaries and queries/ only.")
+	cmd.Flags().BoolVar(&scmFlag, "scm", true, "Publish .scm query files.")
+	cmd.Flags().BoolVar(&noSCM, "no-scm", false, "Skip publishing .scm query files.")
+	_ = cmd.Flags().MarkHidden("no-scm")
 	cmd.Flags().BoolVar(&bothMode, "both", false, "Move binaries, node-types.json, and queries/.")
+	cmd.Flags().BoolVar(&manifestFlag, "manifest", true, "Generate and validate manifest.json.")
+	cmd.Flags().BoolVar(&noManifest, "no-manifest", false, "Skip generating and validating manifest.json.")
+	_ = cmd.Flags().MarkHidden("no-manifest")
 	cmd.Flags().BoolVar(&clean, "clean", true, "Clean the build directory for each successfully moved language.")
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "Overwrite existing output files.")
 	cmd.Flags().BoolVar(&allowCrossValidation, "allow-cross-validation", false, "Allow cross-platform static validation for non-host binaries.")
 	cmd.Flags().BoolVar(&staticCrossValidation, "static-cross-validation", false, "Alias for --allow-cross-validation.")
+	cmd.Flags().BoolVar(&sourceFlag, "source", false, "Preserve C/C++ parser sources (src/).")
+	cmd.Flags().BoolVar(&cSourceFlag, "c-source", false, "Alias for --source.")
+	cmd.Flags().BoolVar(&jsFlag, "js", false, "Preserve grammar.js.")
+	cmd.Flags().BoolVar(&wasmFlag, "wasm", false, "Stage WebAssembly (WASM) parser artifact.")
+	cmd.Flags().BoolVar(&compactFlag, "compact", false, "Generate and validate compact-node-types.yaml alongside node-types.json.")
+	cmd.Flags().BoolVar(&checkCompactFlag, "check-compact", false, "Validate existing compact-node-types.yaml against node-types.json.")
+
+	_ = verbose
+	_ = makeReporter
+
+	return cmd
+}
+
+// ─── clean subcommand ─────────────────────────────────────────────────────────
+
+func (a *App) cleanCmd(configPath *string, verbose *bool, makeReporter func() Reporter) *cobra.Command {
+	var language string
+	var prune bool
+
+	cmd := &cobra.Command{
+		Use:   "clean",
+		Short: "Clean or prune build directories",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if a.cleaner == nil {
+				return errors.New("clean command is not configured")
+			}
+			cfg, err := a.load(*configPath)
+			if err != nil {
+				return err
+			}
+			return a.cleaner.Clean(cmd.Context(), cfg, CleanRequest{
+				Language: language,
+				Prune:    prune,
+			})
+		},
+	}
+
+	cmd.Flags().StringVarP(&language, "language", "l", "", "Only clean the specified language.")
+	cmd.Flags().BoolVar(&prune, "prune", false, "Prune extraneous cache files while preserving grammar sources and manifests.")
+
+	_ = verbose
+	_ = makeReporter
+
+	return cmd
+}
+
+// ─── compact subcommand ───────────────────────────────────────────────────────
+
+func (a *App) compactCmd(configPath *string, verbose *bool, makeReporter func() Reporter) *cobra.Command {
+	var language string
+	var check bool
+
+	cmd := &cobra.Command{
+		Use:   "compact",
+		Short: "Generate or validate token-efficient compact node types",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if a.compactor == nil {
+				return errors.New("compact command is not configured")
+			}
+			cfg, err := a.load(*configPath)
+			if err != nil {
+				return err
+			}
+			lang := language
+			if lang == "" && len(args) > 0 {
+				lang = args[0]
+			}
+			return a.compactor.Compact(cmd.Context(), cfg, CompactRequest{
+				Language: lang,
+				Check:    check,
+			})
+		},
+	}
+
+	cmd.Flags().StringVarP(&language, "language", "l", "", "Only compact the specified language.")
+	cmd.Flags().BoolVar(&check, "check", false, "Validate existing compact YAML without regenerating.")
 
 	_ = verbose
 	_ = makeReporter

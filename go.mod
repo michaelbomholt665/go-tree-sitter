@@ -25,8 +25,21 @@ require (
 )
 
 require (
+	github.com/camdencheek/tree-sitter-dockerfile v0.2.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/mattn/go-pointer v0.0.1 // indirect
 	github.com/spf13/cobra v1.10.2 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
+	github.com/tree-sitter-grammars/tree-sitter-lua v0.5.0 // indirect
+	github.com/tree-sitter-grammars/tree-sitter-make v1.1.1 // indirect
+	github.com/tree-sitter-grammars/tree-sitter-zig v1.1.2 // indirect
+	github.com/tree-sitter/tree-sitter-bash v0.25.1 // indirect
+	github.com/tree-sitter/tree-sitter-haskell v0.23.1 // indirect
+	github.com/tree-sitter/tree-sitter-julia v0.25.0 // indirect
+	github.com/tree-sitter/tree-sitter-ocaml v0.25.0 // indirect
+	github.com/tree-sitter/tree-sitter-php v0.24.2 // indirect
+	github.com/tree-sitter/tree-sitter-regex v0.25.0 // indirect
+	github.com/tree-sitter/tree-sitter-ruby v0.23.1 // indirect
+	github.com/tree-sitter/tree-sitter-scala v0.26.2 // indirect
+	github.com/uyha/tree-sitter-cmake v0.7.4 // indirect
 )

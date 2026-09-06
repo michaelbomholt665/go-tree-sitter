@@ -65,15 +65,19 @@ func NewMoverWithValidatorAndReporter(cleaner *Cleaner, validator ArtifactValida
 }
 
 type stagedLanguage struct {
-	language   _jsii.Language
-	binaries   []string
-	provenance map[string]BinaryProvenance
-	nodeTypes  bool
-	queries    bool
+	language         _jsii.Language
+	binaries         []string
+	provenance       map[string]BinaryProvenance
+	nodeTypes        bool
+	compactNodeTypes bool
+	queries          bool
+	wasm             bool
+	cSource          bool
+	js               bool
 }
 
 func (m *Mover) Move(ctx context.Context, cfg *_jsii.Config, req _jsii.MoveRequest) error {
-	if !cfg.Output.GenerateManifest {
+	if req.GenerateManifest && !cfg.Output.GenerateManifest {
 		return errors.New("publication requires a validated manifest; generate_manifest=false is no longer supported")
 	}
 	languages, err := cfg.ResolveLanguages(req.Language)
@@ -126,23 +130,32 @@ func (m *Mover) Move(ctx context.Context, cfg *_jsii.Config, req _jsii.MoveReque
 		return fmt.Errorf("validate staged native release: %w", validationErr)
 	}
 
-	for _, lang := range languages {
-		prepared := staged[lang.Name]
-		manifest, err := GenerateManifest(lang, prepared.binaries, measuredABI, prepared.provenance, prepared.nodeTypes, prepared.queries)
-		if err != nil {
-			preparationErrors = append(preparationErrors, fmt.Errorf("manifest %s: %w", lang.Name, err))
-			continue
+	if req.GenerateManifest {
+		for _, lang := range languages {
+			prepared := staged[lang.Name]
+			manifest, err := GenerateManifest(lang, prepared.binaries, measuredABI, prepared.provenance, ArtifactInfo{
+				HasNodeTypes:        prepared.nodeTypes,
+				HasCompactNodeTypes: prepared.compactNodeTypes,
+				HasQueries:          prepared.queries,
+				HasWasm:             prepared.wasm,
+				HasCSource:          prepared.cSource,
+				HasJS:               prepared.js,
+			})
+			if err != nil {
+				preparationErrors = append(preparationErrors, fmt.Errorf("manifest %s: %w", lang.Name, err))
+				continue
+			}
+			manifestPath := filepath.Join(stage, lang.Name, "manifest.json")
+			if err := manifest.WriteToFile(manifestPath); err != nil {
+				preparationErrors = append(preparationErrors, fmt.Errorf("manifest %s: %w", lang.Name, err))
+			}
 		}
-		manifestPath := filepath.Join(stage, lang.Name, "manifest.json")
-		if err := manifest.WriteToFile(manifestPath); err != nil {
-			preparationErrors = append(preparationErrors, fmt.Errorf("manifest %s: %w", lang.Name, err))
+		if err := errors.Join(preparationErrors...); err != nil {
+			return err
 		}
-	}
-	if err := errors.Join(preparationErrors...); err != nil {
-		return err
-	}
-	if err := validateCatalog(stage, languages, measuredABI); err != nil {
-		return fmt.Errorf("validate staged catalog: %w", err)
+		if err := validateCatalog(stage, languages, measuredABI); err != nil {
+			return fmt.Errorf("validate staged catalog: %w", err)
+		}
 	}
 	if err := publishAtomic(stage, base); err != nil {
 		return err
@@ -212,14 +225,132 @@ func (m *Mover) stageLanguage(cfg *_jsii.Config, stage string, lang _jsii.Langua
 			return stagedLanguage{}, fmt.Errorf("node-types.json revision mismatch for %q: generated %s, staged %s", binaryPath, provenance.NodeTypesSHA256, checksum)
 		}
 	}
-	if req.Mode.IncludesQueries() {
-		queriesSource, found := findQueries(source, buildRootDir(cfg, lang))
-		if found {
-			if err := copyDirContents(queriesSource, filepath.Join(outputDir, "queries")); err != nil {
-				return stagedLanguage{}, err
-			}
-			result.queries = true
+	if req.Compact {
+		rawJSON, err := os.ReadFile(nodeTypesPath)
+		if err != nil {
+			return stagedLanguage{}, fmt.Errorf("read node-types.json for %s: %w", lang.Name, err)
 		}
+		compactYAML, err := CompactNodeTypes(rawJSON)
+		if err != nil {
+			return stagedLanguage{}, fmt.Errorf("generate compact node types for %s: %w", lang.Name, err)
+		}
+		discrepancies, _, err := ValidateCapture(rawJSON, string(compactYAML))
+		if err != nil {
+			return stagedLanguage{}, fmt.Errorf("validate compact node types for %s: %w", lang.Name, err)
+		}
+		if len(discrepancies) > 0 {
+			return stagedLanguage{}, fmt.Errorf("compact validation failed for %s: %s", lang.Name, strings.Join(discrepancies, "; "))
+		}
+		targetCompact := filepath.Join(outputDir, "compact-node-types.yaml")
+		if err := os.WriteFile(targetCompact, compactYAML, 0o644); err != nil {
+			return stagedLanguage{}, fmt.Errorf("write compact-node-types.yaml for %s: %w", lang.Name, err)
+		}
+		result.compactNodeTypes = true
+	} else if req.CheckCompact {
+		candidateCompactPaths := []string{
+			filepath.Join(outputDir, "compact-node-types.yaml"),
+			filepath.Join(source, "compact-node-types.yaml"),
+			filepath.Join(source, "src", "compact-node-types.yaml"),
+			filepath.Join(cfg.Output.GrammarBase, lang.Name, "compact-node-types.yaml"),
+		}
+		var foundCompact string
+		for _, cand := range candidateCompactPaths {
+			if info, err := os.Stat(cand); err == nil && info.Mode().IsRegular() {
+				foundCompact = cand
+				break
+			}
+		}
+		if foundCompact == "" {
+			return stagedLanguage{}, fmt.Errorf("compact-node-types.yaml not found for %s; run with --compact to generate", lang.Name)
+		}
+		rawJSON, err := os.ReadFile(nodeTypesPath)
+		if err != nil {
+			return stagedLanguage{}, fmt.Errorf("read node-types.json for %s: %w", lang.Name, err)
+		}
+		yamlBytes, err := os.ReadFile(foundCompact)
+		if err != nil {
+			return stagedLanguage{}, fmt.Errorf("read compact-node-types.yaml for %s: %w", lang.Name, err)
+		}
+		discrepancies, _, err := ValidateCapture(rawJSON, string(yamlBytes))
+		if err != nil {
+			return stagedLanguage{}, fmt.Errorf("validate compact node types for %s: %w", lang.Name, err)
+		}
+		if len(discrepancies) > 0 {
+			return stagedLanguage{}, fmt.Errorf("compact validation failed for %s: %s", lang.Name, strings.Join(discrepancies, "; "))
+		}
+		targetCompact := filepath.Join(outputDir, "compact-node-types.yaml")
+		if foundCompact != targetCompact {
+			if err := copyFile(foundCompact, targetCompact, true); err != nil {
+				return stagedLanguage{}, fmt.Errorf("copy compact-node-types.yaml: %w", err)
+			}
+		}
+		result.compactNodeTypes = true
+	}
+	if req.CopySCM {
+		targetQueriesDir := filepath.Join(outputDir, "queries")
+		copied, err := copyLanguageQueries(source, buildRootDir(cfg, lang), targetQueriesDir, lang)
+		if err != nil {
+			return stagedLanguage{}, err
+		}
+		result.queries = copied
+	}
+	if req.CopySource {
+		srcDir := filepath.Join(source, "src")
+		if info, err := os.Stat(srcDir); err != nil || !info.IsDir() {
+			return stagedLanguage{}, fmt.Errorf("source directory %q not found; run `tree-sitter build` first", srcDir)
+		}
+		targetSrc := filepath.Join(outputDir, "src")
+		if err := copySourceDir(srcDir, targetSrc); err != nil {
+			return stagedLanguage{}, fmt.Errorf("copy source files from %q: %w", srcDir, err)
+		}
+		parserPath := filepath.Join(targetSrc, "parser.c")
+		if _, err := os.Stat(parserPath); err != nil {
+			return stagedLanguage{}, fmt.Errorf("expected parser source %q not found", parserPath)
+		}
+		result.cSource = true
+	}
+	if req.CopyJS {
+		grammarJS := filepath.Join(source, "grammar.js")
+		if _, err := os.Stat(grammarJS); err != nil {
+			grammarJS = filepath.Join(buildRootDir(cfg, lang), "grammar.js")
+		}
+		if info, err := os.Stat(grammarJS); err != nil || !info.Mode().IsRegular() {
+			return stagedLanguage{}, fmt.Errorf("grammar.js not found under %q; run `tree-sitter build` first", source)
+		}
+		targetJS := filepath.Join(outputDir, "grammar.js")
+		if err := copyFile(grammarJS, targetJS, true); err != nil {
+			return stagedLanguage{}, fmt.Errorf("copy grammar.js: %w", err)
+		}
+		result.js = true
+	}
+	if req.IncludeWasm {
+		wasmFilename := fmt.Sprintf("tree-sitter-%s.wasm", lang.Name)
+		candidatePaths := []string{
+			filepath.Join(buildRootDir(cfg, lang), wasmFilename),
+			filepath.Join(source, wasmFilename),
+			filepath.Join(binaryDir(cfg, lang), wasmFilename),
+			filepath.Join(buildRootDir(cfg, lang), "bin", wasmFilename),
+			filepath.Join(buildRootDir(cfg, lang), fmt.Sprintf("tree-sitter-%s.wasm", lang.Grammar)),
+			filepath.Join(source, fmt.Sprintf("tree-sitter-%s.wasm", lang.Grammar)),
+		}
+		var sourceWasm string
+		for _, cand := range candidatePaths {
+			if info, err := os.Stat(cand); err == nil && info.Mode().IsRegular() && info.Size() > 0 {
+				sourceWasm = cand
+				break
+			}
+		}
+		if sourceWasm == "" {
+			return stagedLanguage{}, fmt.Errorf("wasm artifact %q not found; run `ts-build compile --wasm` first", wasmFilename)
+		}
+		targetWasm := filepath.Join(outputDir, wasmFilename)
+		if err := copyFile(sourceWasm, targetWasm, true); err != nil {
+			return stagedLanguage{}, fmt.Errorf("copy wasm artifact: %w", err)
+		}
+		if _, err := checksumFile(targetWasm); err != nil {
+			return stagedLanguage{}, fmt.Errorf("checksum wasm artifact %q: %w", targetWasm, err)
+		}
+		result.wasm = true
 	}
 	sort.Strings(result.binaries)
 	return result, nil
@@ -391,6 +522,126 @@ func publishAtomic(stage, destination string) error {
 	return nil
 }
 
+type tsConfigGrammarQueries struct {
+	Name       string `json:"name"`
+	Path       string `json:"path"`
+	Highlights any    `json:"highlights"`
+	Injections any    `json:"injections"`
+	Locals     any    `json:"locals"`
+	Tags       any    `json:"tags"`
+	Folds      any    `json:"folds"`
+	Indents    any    `json:"indents"`
+}
+
+type tsConfigQueryFile struct {
+	Grammars []tsConfigGrammarQueries `json:"grammars"`
+}
+
+func extractQueryPaths(val any) []string {
+	if val == nil {
+		return nil
+	}
+	switch v := val.(type) {
+	case string:
+		if strings.TrimSpace(v) != "" {
+			return []string{v}
+		}
+	case []any:
+		var paths []string
+		for _, item := range v {
+			if s, ok := item.(string); ok && strings.TrimSpace(s) != "" {
+				paths = append(paths, s)
+			}
+		}
+		return paths
+	}
+	return nil
+}
+
+func copyLanguageQueries(sourceDir, repoRoot, targetQueriesDir string, lang _jsii.Language) (bool, error) {
+	// 1. Try to read tree-sitter.json to identify exact queries declared for this grammar.
+	for _, configDir := range []string{sourceDir, repoRoot} {
+		configPath := filepath.Join(configDir, "tree-sitter.json")
+		if data, err := os.ReadFile(configPath); err == nil {
+			var cfg tsConfigQueryFile
+			if err := json.Unmarshal(data, &cfg); err == nil && len(cfg.Grammars) > 0 {
+				var matchingGrammar *tsConfigGrammarQueries
+				for i := range cfg.Grammars {
+					g := &cfg.Grammars[i]
+					if g.Name == lang.Grammar || g.Name == lang.Name {
+						matchingGrammar = g
+						break
+					}
+					if lang.SourceSubdir != "" && (g.Path == lang.SourceSubdir || strings.Trim(filepath.ToSlash(g.Path), "./") == strings.Trim(filepath.ToSlash(lang.SourceSubdir), "./")) {
+						matchingGrammar = g
+						break
+					}
+				}
+				if matchingGrammar != nil {
+					var qPaths []string
+					qPaths = append(qPaths, extractQueryPaths(matchingGrammar.Highlights)...)
+					qPaths = append(qPaths, extractQueryPaths(matchingGrammar.Injections)...)
+					qPaths = append(qPaths, extractQueryPaths(matchingGrammar.Locals)...)
+					qPaths = append(qPaths, extractQueryPaths(matchingGrammar.Tags)...)
+					qPaths = append(qPaths, extractQueryPaths(matchingGrammar.Folds)...)
+					qPaths = append(qPaths, extractQueryPaths(matchingGrammar.Indents)...)
+
+					if len(qPaths) > 0 {
+						if err := os.MkdirAll(targetQueriesDir, 0o755); err != nil {
+							return false, fmt.Errorf("create queries directory: %w", err)
+						}
+						copiedAny := false
+						for _, qp := range qPaths {
+							candidate := filepath.Join(repoRoot, filepath.FromSlash(qp))
+							if _, err := os.Stat(candidate); os.IsNotExist(err) {
+								candidate = filepath.Join(sourceDir, filepath.FromSlash(qp))
+							}
+							if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+								dest := filepath.Join(targetQueriesDir, filepath.Base(qp))
+								if (lang.Grammar == "ocaml_interface" || lang.Name == "ocaml-interface") && filepath.Base(qp) == "highlights.scm" {
+									raw, err := os.ReadFile(candidate)
+									if err != nil {
+										return false, fmt.Errorf("read query file %q: %w", candidate, err)
+									}
+									cleaned := strings.ReplaceAll(string(raw), " (shebang)", "")
+									if err := os.WriteFile(dest, []byte(cleaned), 0o644); err != nil {
+										return false, fmt.Errorf("write cleaned query file %q: %w", dest, err)
+									}
+								} else {
+									if err := copyFile(candidate, dest, true); err != nil {
+										return false, fmt.Errorf("copy query file %q: %w", candidate, err)
+									}
+								}
+								copiedAny = true
+							}
+						}
+						if copiedAny {
+							return true, nil
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// 2. Fall back to conventional queries directory if tree-sitter.json didn't specify queries.
+	queriesSource, found := findQueries(sourceDir, repoRoot)
+	if found {
+		if err := copyDirContents(queriesSource, targetQueriesDir); err != nil {
+			return false, err
+		}
+		if lang.Grammar == "ocaml_interface" || lang.Name == "ocaml-interface" {
+			dest := filepath.Join(targetQueriesDir, "highlights.scm")
+			if raw, err := os.ReadFile(dest); err == nil {
+				cleaned := strings.ReplaceAll(string(raw), " (shebang)", "")
+				_ = os.WriteFile(dest, []byte(cleaned), 0o644)
+			}
+		}
+		return true, nil
+	}
+	return false, nil
+}
+
 func findQueries(sourceDir, repoRoot string) (string, bool) {
 	for _, candidate := range []string{filepath.Join(sourceDir, "queries"), filepath.Join(repoRoot, "queries")} {
 		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
@@ -472,5 +723,34 @@ func copyDirContents(sourceDir, targetDir string) error {
 			return fmt.Errorf("refuse to publish symbolic link %q", path)
 		}
 		return copyFile(path, destination, true)
+	})
+}
+
+func copySourceDir(sourceDir, targetDir string) error {
+	return filepath.WalkDir(sourceDir, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(sourceDir, path)
+		if err != nil {
+			return err
+		}
+		if rel == "." {
+			return os.MkdirAll(targetDir, 0o755)
+		}
+		dest := filepath.Join(targetDir, rel)
+		if entry.IsDir() {
+			return os.MkdirAll(dest, 0o755)
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			return fmt.Errorf("refuse to copy symbolic link %q", path)
+		}
+		ext := strings.ToLower(filepath.Ext(path))
+		switch ext {
+		case ".c", ".h", ".cc", ".cpp", ".hpp", ".cxx":
+			return copyFile(path, dest, true)
+		default:
+			return nil
+		}
 	})
 }

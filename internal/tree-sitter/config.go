@@ -28,6 +28,7 @@ type Config struct {
 	ABIVersions          map[string]ABIRange    `yaml:"abi_versions,omitempty"` // Deprecated: never used for artifact ABI metadata.
 	Languages            []Language             `yaml:"languages"`
 	Output               Output                 `yaml:"output"`
+	Prune                bool                   `yaml:"prune,omitempty"`
 }
 
 type BuildTarget struct {

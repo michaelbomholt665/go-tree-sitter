@@ -65,19 +65,19 @@ func (b *Builder) Build(ctx context.Context, cfg *_jsii.Config, req _jsii.BuildR
 
 	var buildErrors []error
 	for _, lang := range languages {
-		if err := b.buildLanguage(ctx, cfg, lang, req.Force, generatorVersion); err != nil {
+		if err := b.buildLanguage(ctx, cfg, lang, req, generatorVersion); err != nil {
 			buildErrors = append(buildErrors, fmt.Errorf("build %s: %w", lang.Name, err))
 		}
 	}
 	return errors.Join(buildErrors...)
 }
 
-func (b *Builder) buildLanguage(ctx context.Context, cfg *_jsii.Config, lang _jsii.Language, force bool, generatorVersion string) error {
+func (b *Builder) buildLanguage(ctx context.Context, cfg *_jsii.Config, lang _jsii.Language, req _jsii.BuildRequest, generatorVersion string) error {
 	start := time.Now()
 	b.reporter.Start("build", lang.Name)
 
 	root := buildRootDir(cfg, lang)
-	if force {
+	if req.Force {
 		if err := os.RemoveAll(root); err != nil {
 			err = fmt.Errorf("remove existing build directory %q: %w", root, err)
 			b.reporter.Failure("build", lang.Name, err, "")
@@ -99,9 +99,19 @@ func (b *Builder) buildLanguage(ctx context.Context, cfg *_jsii.Config, lang _js
 		b.reporter.Failure("build", lang.Name, err, "")
 		return err
 	} else if err := b.checkoutVersion(ctx, lang, root); err != nil {
+		// If checkout in the existing directory fails (e.g. incomplete clone or pruned repo),
+		// clean and retry with a fresh clone.
+		if remErr := os.RemoveAll(root); remErr == nil {
+			if clErr := b.cloneRepository(ctx, lang, root); clErr == nil {
+				if coErr := b.checkoutVersion(ctx, lang, root); coErr == nil {
+					goto checkedOut
+				}
+			}
+		}
 		b.reporter.Failure("build", lang.Name, err, diagnosticsFrom(err))
 		return err
 	}
+checkedOut:
 
 	src := sourceDir(cfg, lang)
 	if info, err := os.Stat(src); err != nil {
@@ -244,6 +254,15 @@ func (b *Builder) buildLanguage(ctx context.Context, cfg *_jsii.Config, lang _js
 		err = fmt.Errorf("write source provenance: %w", err)
 		b.reporter.Failure("build", lang.Name, err, "")
 		return err
+	}
+
+	if req.Prune || cfg.Prune {
+		cleaner := NewCleaner()
+		if err := cleaner.PruneLanguage(cfg.BuildDir, lang.Name); err != nil {
+			err = fmt.Errorf("prune build cache: %w", err)
+			b.reporter.Failure("build", lang.Name, err, "")
+			return err
+		}
 	}
 
 	b.reporter.Success("build", lang.Name, "", time.Since(start))
