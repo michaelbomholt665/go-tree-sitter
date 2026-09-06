@@ -29,16 +29,20 @@ type BuildRequest struct {
 }
 
 type CompileRequest struct {
-	Language string
-	OS       string
-	Arch     string
+	Language              string
+	OS                    string
+	Arch                  string
+	AllowCrossValidation  bool
+	StaticCrossValidation bool
 }
 
 type MoveRequest struct {
-	Language string
-	Mode     MoveMode
-	Clean    bool
-	Force    bool
+	Language              string
+	Mode                  MoveMode
+	Clean                 bool
+	Force                 bool
+	AllowCrossValidation  bool
+	StaticCrossValidation bool
 }
 
 type Builder interface {
@@ -163,6 +167,8 @@ func (a *App) runCompile(ctx context.Context, args []string) error {
 	language := fs.String("language", "", "Only compile the specified language.")
 	targetOS := fs.String("os", "", "Target operating system (linux, windows, macos).")
 	targetArch := fs.String("arch", "", "Target architecture (amd64, arm64).")
+	allowCrossValidation := fs.Bool("allow-cross-validation", false, "Allow cross-platform static validation for non-host binaries.")
+	staticCrossValidation := fs.Bool("static-cross-validation", false, "Alias for --allow-cross-validation.")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
@@ -179,9 +185,11 @@ func (a *App) runCompile(ctx context.Context, args []string) error {
 	}
 
 	return a.compiler.Compile(ctx, cfg, CompileRequest{
-		Language: *language,
-		OS:       *targetOS,
-		Arch:     *targetArch,
+		Language:              *language,
+		OS:                    *targetOS,
+		Arch:                  *targetArch,
+		AllowCrossValidation:  *allowCrossValidation || *staticCrossValidation,
+		StaticCrossValidation: *staticCrossValidation,
 	})
 }
 
@@ -199,6 +207,8 @@ func (a *App) runMove(ctx context.Context, args []string) error {
 	bothMode := fs.Bool("both", false, "Move binaries, node-types.json, and queries/.")
 	clean := fs.Bool("clean", true, "Clean the build directory for each successfully moved language.")
 	force := fs.Bool("force", false, "Overwrite existing output files.")
+	allowCrossValidation := fs.Bool("allow-cross-validation", false, "Allow cross-platform static validation for non-host binaries.")
+	staticCrossValidation := fs.Bool("static-cross-validation", false, "Alias for --allow-cross-validation.")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
@@ -217,10 +227,12 @@ func (a *App) runMove(ctx context.Context, args []string) error {
 	}
 
 	return a.mover.Move(ctx, cfg, MoveRequest{
-		Language: *language,
-		Mode:     mode,
-		Clean:    *clean,
-		Force:    *force,
+		Language:              *language,
+		Mode:                  mode,
+		Clean:                 *clean,
+		Force:                 *force,
+		AllowCrossValidation:  *allowCrossValidation || *staticCrossValidation,
+		StaticCrossValidation: *staticCrossValidation,
 	})
 }
 
@@ -312,10 +324,11 @@ func RequireTools(lookup PathLookup, names ...string) error {
 }
 
 type Command struct {
-	Name string
-	Args []string
-	Dir  string
-	Env  map[string]string
+	Name          string
+	Args          []string
+	Dir           string
+	Env           map[string]string
+	SilenceStderr bool
 }
 
 func (c Command) String() string {
@@ -353,7 +366,11 @@ func (r *ExecRunner) Run(ctx context.Context, cmd Command) error {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	execCmd.Stdout = io.MultiWriter(r.stdout, &stdout)
-	execCmd.Stderr = io.MultiWriter(r.stderr, &stderr)
+	if cmd.SilenceStderr {
+		execCmd.Stderr = &stderr
+	} else {
+		execCmd.Stderr = io.MultiWriter(r.stderr, &stderr)
+	}
 
 	if err := execCmd.Run(); err != nil {
 		outStr := strings.TrimSpace(stdout.String())

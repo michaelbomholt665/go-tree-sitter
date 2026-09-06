@@ -62,7 +62,22 @@ func resolveTarget(goos, arch string) (target, error) {
 
 func resolveConfiguredTarget(cfg *_jsii.Config, goos, arch string) (target, error) {
 	if goos != "" || arch != "" {
-		return resolveTarget(goos, arch)
+		resolved, err := resolveTarget(goos, arch)
+		if err != nil {
+			return target{}, err
+		}
+		if cfg != nil {
+			for _, ct := range cfg.Targets {
+				if normalizeGOOS(ct.OS) == resolved.GOOS && strings.ToLower(strings.TrimSpace(ct.Arch)) == resolved.Arch {
+					resolved.Triple = ct.Triple
+					resolved.Compiler = ct.Compiler
+					resolved.CXX = ct.CXX
+					resolved.CompilerVersion = ct.CompilerVersion
+					break
+				}
+			}
+		}
+		return resolved, nil
 	}
 
 	if cfg.OSTarget == "" {
@@ -158,6 +173,14 @@ func binaryDir(cfg *_jsii.Config, lang _jsii.Language) string {
 	if err != nil {
 		return filepath.Join(buildRootDir(cfg, lang), "bin")
 	}
+	template := cfg.Output.GrammarCompile
+	if strings.TrimSpace(template) == "" {
+		return filepath.Join(buildRootDir(cfg, lang), "bin")
+	}
+	return renderPathTemplate(template, lang, target)
+}
+
+func binaryDirForTarget(cfg *_jsii.Config, lang _jsii.Language, target target) string {
 	template := cfg.Output.GrammarCompile
 	if strings.TrimSpace(template) == "" {
 		return filepath.Join(buildRootDir(cfg, lang), "bin")

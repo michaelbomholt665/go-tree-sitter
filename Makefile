@@ -1,31 +1,61 @@
-TREE_SITTER ?= tree-sitter
+TREE_SITTER         ?= tree-sitter
 TREE_SITTER_VERSION ?= 0.26.8
-NPM ?= npm
+NPM                 ?= npm
+CONFIG              ?= tree-sitter-config.yaml
 
-.PHONY: help build grammar-build compile move release test clean licenses fmt lint vet tool-help check-tree-sitter install-tree-sitter-cli
+.PHONY: help build sync-config sync-config-apply \
+        grammar-build \
+        compile compile-linux compile-windows compile-mac compile-all \
+        move \
+        release release-linux release-windows release-mac release-all \
+        test fmt vet lint tool-help \
+        check-tree-sitter install-tree-sitter-cli \
+        licenses clean
+
+# ──────────────────────────────────────────────────────────────────────────────
 
 help:
 	@echo "go-tree-sitter - Tree-Sitter grammar builder"
 	@echo ""
 	@echo "Available commands:"
-	@echo "  make build          - Build the Go packages and CLI"
-	@echo "  make grammar-build  - Clone/generate configured grammar sources"
-	@echo "  make compile        - Compile generated grammars for the configured target"
-	@echo "  make move           - Move compiled grammar artifacts into the output directory, overwriting existing files"
-	@echo "  make release        - Run the pinned generate, compile, validate, and atomic publish pipeline"
-	@echo "  make check-tree-sitter - Check for the external tree-sitter CLI"
-	@echo "  make install-tree-sitter-cli - Install the external tree-sitter CLI with npm"
-	@echo "  make test           - Run tests"
-	@echo "  make fmt            - Format code"
-	@echo "  make vet            - Analyze code for bugs"
-	@echo "  make lint           - Run golangci-lint"
-	@echo "  make tool-help      - Show the tree-sitter CLI help"
-	@echo "  make licenses       - Generate NOTICE.md with license information"
-	@echo "  make clean          - Clean build artifacts"
-	@echo "  make help           - Show this help message"
+	@echo "  make build                  Build the Go packages and CLI"
+	@echo "  make grammar-build          Clone/generate grammar sources (run once before compiling)"
+	@echo ""
+	@echo "  make compile                Compile for the default target (OS_TARGET in config)"
+	@echo "  make compile-linux          Compile for Linux amd64"
+	@echo "  make compile-windows        Compile for Windows amd64"
+	@echo "  make compile-mac            Compile for macOS amd64 + arm64"
+	@echo "  make compile-all            Compile for all platforms"
+	@echo ""
+	@echo "  make move                   Publish artifacts to data/tree-sitter/grammar/, update manifest.json"
+	@echo ""
+	@echo "  make release                Full pipeline for the default target (grammar-build + compile + move)"
+	@echo "  make release-linux          Full pipeline for Linux amd64"
+	@echo "  make release-windows        Full pipeline for Windows amd64"
+	@echo "  make release-mac            Full pipeline for macOS amd64 + arm64"
+	@echo "  make release-all            Full pipeline for all platforms"
+	@echo ""
+	@echo "  make sync-config            Preview go.mod → config version sync (dry-run)"
+	@echo "  make sync-config-apply      Apply go.mod → config version sync"
+	@echo "  make check-tree-sitter      Check for the external tree-sitter CLI"
+	@echo "  make install-tree-sitter-cli Install tree-sitter CLI via npm"
+	@echo "  make test                   Run tests"
+	@echo "  make fmt                    Format code"
+	@echo "  make vet                    Analyze code for bugs"
+	@echo "  make lint                   Run golangci-lint"
+	@echo "  make tool-help              Show the tree-sitter CLI help"
+	@echo "  make licenses               Regenerate NOTICE.md"
+	@echo "  make clean                  Clean build artifacts"
 
-build:
-	go build ./...
+# ── Version sync ──────────────────────────────────────────────────────────────
+
+sync-config:
+	go run ./cmd/sync-config --config $(CONFIG) --dry-run
+
+sync-config-apply:
+	go run ./cmd/sync-config --config $(CONFIG)
+
+# ── Tree-sitter CLI ───────────────────────────────────────────────────────────
 
 check-tree-sitter:
 	@command -v $(TREE_SITTER) >/dev/null 2>&1 || { \
@@ -44,19 +74,51 @@ check-tree-sitter:
 install-tree-sitter-cli:
 	$(NPM) install -g tree-sitter-cli@$(TREE_SITTER_VERSION)
 
+# ── Build Go packages ─────────────────────────────────────────────────────────
+
+build:
+	go build ./...
+
+# ── Grammar source generation (platform-independent) ─────────────────────────
+
 grammar-build: check-tree-sitter
-	go run ./cmd/tree-sitter build
+	go run ./cmd/tree-sitter build --config $(CONFIG)
+
+# ── Compile ───────────────────────────────────────────────────────────────────
 
 compile: check-tree-sitter
-	go run ./cmd/tree-sitter compile
+	go run ./cmd/tree-sitter compile --config $(CONFIG)
+
+compile-linux: check-tree-sitter
+	go run ./cmd/tree-sitter compile --config $(CONFIG) --os linux --arch amd64
+
+compile-windows: check-tree-sitter
+	go run ./cmd/tree-sitter compile --config $(CONFIG) --os windows --arch amd64
+
+compile-mac: check-tree-sitter
+	go run ./cmd/tree-sitter compile --config $(CONFIG) --os macos --arch amd64
+	go run ./cmd/tree-sitter compile --config $(CONFIG) --os macos --arch arm64
+
+compile-all: compile-linux compile-windows compile-mac
+
+# ── Move / publish ────────────────────────────────────────────────────────────
 
 move:
-	go run ./cmd/tree-sitter move --force
+	go run ./cmd/tree-sitter move --config $(CONFIG) --force
 
-release: check-tree-sitter
-	go run ./cmd/tree-sitter build --force
-	go run ./cmd/tree-sitter compile
-	go run ./cmd/tree-sitter move --both --force
+# ── Release pipelines ─────────────────────────────────────────────────────────
+
+release: check-tree-sitter grammar-build compile move
+
+release-linux: check-tree-sitter grammar-build compile-linux move
+
+release-windows: check-tree-sitter grammar-build compile-windows move
+
+release-mac: check-tree-sitter grammar-build compile-mac move
+
+release-all: check-tree-sitter grammar-build compile-all move
+
+# ── Testing and code quality ──────────────────────────────────────────────────
 
 test:
 	go test -v -race -coverprofile=coverage.out ./...
@@ -74,6 +136,8 @@ lint:
 tool-help:
 	go run ./cmd/tree-sitter --help
 
+# ── Licenses ──────────────────────────────────────────────────────────────────
+
 licenses:
 	@echo "Generating license notices..."
 	go-licenses report github.com/michaelbomholt665/go-tree-sitter > NOTICE.md.tmp || true
@@ -86,6 +150,8 @@ licenses:
 	else \
 		echo "⚠ go-licenses failed; skipping NOTICE.md generation"; \
 	fi
+
+# ── Clean ─────────────────────────────────────────────────────────────────────
 
 clean:
 	rm -f coverage.out coverage.html NOTICE.md.tmp

@@ -2,6 +2,7 @@ package build
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -107,6 +108,10 @@ func (b *Builder) buildLanguage(ctx context.Context, cfg *_jsii.Config, lang _js
 		return err
 	}
 
+	if err := ensureTreeSitterJSON(src, lang); err != nil {
+		return fmt.Errorf("ensure tree-sitter.json: %w", err)
+	}
+
 	fmt.Fprintf(b.stdout, "generating parser sources for %s\n", lang.Name)
 	generateArgs := []string{"generate"}
 	var generateABI *int
@@ -122,6 +127,10 @@ func (b *Builder) buildLanguage(ctx context.Context, cfg *_jsii.Config, lang _js
 		Env:  buildEnv,
 	}); err != nil {
 		return fmt.Errorf("generate grammar source: %w", err)
+	}
+
+	if detected, err := detectGeneratedABI(src); err == nil && detected > 0 {
+		generateABI = &detected
 	}
 
 	nodeTypesPath, err := findNodeTypes(src)
@@ -182,14 +191,22 @@ func (b *Builder) installNodeDependencies(ctx context.Context, root string, env 
 		return fmt.Errorf("inspect package lock %q: %w", lockFile, err)
 	}
 
-	fmt.Fprintf(b.stdout, "installing pinned node dependencies in %s\n", root)
+	fmt.Fprintf(b.stdout, "installing node dependencies in %s\n", root)
 	if err := b.runner.Run(ctx, _jsii.Command{
-		Name: "npm",
-		Args: []string{"ci", "--ignore-scripts"},
-		Dir:  root,
-		Env:  env,
+		Name:          "npm",
+		Args:          []string{"ci", "--ignore-scripts"},
+		Dir:           root,
+		Env:           env,
+		SilenceStderr: true,
 	}); err != nil {
-		return fmt.Errorf("install node dependencies: %w", err)
+		if err := b.runner.Run(ctx, _jsii.Command{
+			Name: "npm",
+			Args: []string{"install", "--ignore-scripts", "--no-audit", "--no-fund"},
+			Dir:  root,
+			Env:  env,
+		}); err != nil {
+			return fmt.Errorf("install node dependencies: %w", err)
+		}
 	}
 
 	return nil
@@ -265,3 +282,100 @@ func resolveCheckoutRef(version string) (string, bool) {
 	}
 	return version, true
 }
+
+func ensureTreeSitterJSON(sourceDir string, lang _jsii.Language) error {
+	configPath := filepath.Join(sourceDir, "tree-sitter.json")
+	if _, err := os.Stat(configPath); err == nil {
+		return nil
+	}
+
+	type grammarEntry struct {
+		Name      string   `json:"name"`
+		CamelCase string   `json:"camelcase,omitempty"`
+		Scope     string   `json:"scope,omitempty"`
+		Path      string   `json:"path"`
+		FileTypes []string `json:"file-types,omitempty"`
+	}
+	type metadataEntry struct {
+		Version string            `json:"version,omitempty"`
+		Links   map[string]string `json:"links,omitempty"`
+	}
+	type tsConfigFile struct {
+		Schema   string          `json:"$schema"`
+		Grammars []grammarEntry  `json:"grammars"`
+		Metadata *metadataEntry  `json:"metadata,omitempty"`
+	}
+
+	grammar := grammarEntry{
+		Name:      lang.Grammar,
+		CamelCase: toCamelCase(lang.Grammar),
+		Scope:     "source." + lang.Grammar,
+		Path:      ".",
+	}
+
+	for _, pkgDir := range []string{sourceDir, filepath.Dir(sourceDir)} {
+		pkgPath := filepath.Join(pkgDir, "package.json")
+		if pkgBytes, err := os.ReadFile(pkgPath); err == nil {
+			var pkg struct {
+				TreeSitter []struct {
+					Scope     string   `json:"scope"`
+					FileTypes []string `json:"file-types"`
+				} `json:"tree-sitter"`
+			}
+			if err := json.Unmarshal(pkgBytes, &pkg); err == nil && len(pkg.TreeSitter) > 0 {
+				if pkg.TreeSitter[0].Scope != "" {
+					grammar.Scope = pkg.TreeSitter[0].Scope
+				}
+				if len(pkg.TreeSitter[0].FileTypes) > 0 {
+					grammar.FileTypes = pkg.TreeSitter[0].FileTypes
+				}
+				break
+			}
+		}
+	}
+
+	configFile := tsConfigFile{
+		Schema:   "https://tree-sitter.github.io/tree-sitter/assets/schemas/config.schema.json",
+		Grammars: []grammarEntry{grammar},
+		Metadata: &metadataEntry{
+			Version: strings.TrimPrefix(lang.Version, "v"),
+			Links: map[string]string{
+				"repository": lang.Repository,
+			},
+		},
+	}
+
+	payload, err := json.MarshalIndent(configFile, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal tree-sitter.json: %w", err)
+	}
+	payload = append(payload, '\n')
+	return os.WriteFile(configPath, payload, 0o644)
+}
+
+func detectGeneratedABI(sourceDir string) (int, error) {
+	parserPath := filepath.Join(sourceDir, "src", "parser.c")
+	content, err := os.ReadFile(parserPath)
+	if err != nil {
+		return 0, err
+	}
+	re := regexp.MustCompile(`(?m)^\s*#\s*define\s+LANGUAGE_VERSION\s+(\d+)`)
+	m := re.FindSubmatch(content)
+	if len(m) == 2 {
+		return strconv.Atoi(string(m[1]))
+	}
+	return 0, errors.New("LANGUAGE_VERSION not found in parser.c")
+}
+
+func toCamelCase(s string) string {
+	parts := strings.FieldsFunc(s, func(r rune) bool {
+		return r == '_' || r == '-' || r == '.'
+	})
+	for i, p := range parts {
+		if len(p) > 0 {
+			parts[i] = strings.ToUpper(p[:1]) + p[1:]
+		}
+	}
+	return strings.Join(parts, "")
+}
+

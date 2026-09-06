@@ -120,6 +120,9 @@ func (c *Config) validateRequiredFields() error {
 	if err := c.validateTargets(); err != nil {
 		return err
 	}
+	if err := c.validateABIVersions(); err != nil {
+		return err
+	}
 
 	c.Output.GrammarBase = cleanConfigPath(c.Output.GrammarBase)
 	if c.Output.GrammarBase == "." {

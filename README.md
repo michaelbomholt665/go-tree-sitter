@@ -33,15 +33,52 @@ Manifest-only regeneration and publication are intentionally unsupported. A mani
 
 The validation runtime is `github.com/tree-sitter/go-tree-sitter v0.25.0`. Compatibility uses that binding's `MIN_COMPATIBLE_LANGUAGE_VERSION` and `LANGUAGE_VERSION` constants (currently 13 and 15). Those constants are validation policy, not binary metadata.
 
-For each native artifact the validator:
+The builder supports **dual-mode validation**:
 
-- checks its file format, architecture, and sole expected `tree_sitter_<grammar>` export;
-- keeps the dynamic library loaded while calling its constructor and `Language.AbiVersion()`;
-- assigns the language through `Parser.SetLanguage`, parses the configured sample, and rejects error trees;
-- validates `node-types.json` against generation provenance and compiles every shipped query with located errors;
-- verifies manifest ABI invariants, provenance, and final-byte SHA-256 values.
+- **Host targets (e.g. Linux on Linux)**: Dynamically validated via `dlopen`:
+  - checks file format, architecture, and sole expected `tree_sitter_<grammar>` export;
+  - keeps the dynamic library loaded while calling its constructor and `Language.AbiVersion()`;
+  - assigns the language through `Parser.SetLanguage`, parses the configured sample, and rejects error trees;
+  - validates `node-types.json` against generation provenance and compiles every shipped query with located errors;
+  - verifies manifest ABI invariants, provenance, and final-byte SHA-256 values.
+- **Cross-platform targets (e.g. Windows `.dll`, macOS `.dylib` on Linux)**: Statically verified without `dlopen`:
+  - **Windows PE**: inspects headers via `debug/pe`, verifies target machine (`IMAGE_FILE_MACHINE_AMD64` or `IMAGE_FILE_MACHINE_ARM64`), valid section headers, and verifies that the PE Export Directory Table exports the constructor symbol (`tree_sitter_<grammar>`);
+  - **macOS Mach-O**: inspects headers via `debug/macho`, verifies CPU architecture (`CpuAmd64` or `CpuArm64`), `TypeDylib`, and symbol table presence of constructor symbols (`_tree_sitter_<grammar>` / `tree_sitter_<grammar>`);
+  - validates `node-types.json` and query files;
+  - obtains ABI version from source and binary build provenance.
 
-Cross-platform binaries must run this validation on their target platform. A Linux validation job will reject Windows or macOS binaries rather than infer their ABI.
+## Cross-compilation
+
+To compile Windows and macOS binaries from a Linux host:
+
+### Prerequisites
+
+You can use either target-specific toolchains or [Zig](https://ziglang.org/):
+
+- **Windows (`.dll`)**: `x86_64-w64-mingw32-gcc` (from `mingw-w64`) or `zig` (`zig cc -target x86_64-windows-gnu`).
+- **macOS (`.dylib`)**: `zig` (`zig cc -target aarch64-macos` / `zig cc -target x86_64-macos`) or an osxcross clang toolchain (`oa64-clang`, `o64-clang`).
+
+If `zig` is installed and available in `$PATH`, the builder will automatically invoke it as a fallback toolchain when target-specific cross-compilers are not found.
+
+### Compiling and Publishing Foreign Targets
+
+```bash
+# Generate grammar sources for the host
+go run ./cmd/tree-sitter build --force
+
+# Compile for Windows
+go run ./cmd/tree-sitter compile --os windows --arch amd64
+
+# Compile for macOS (Apple Silicon and Intel)
+go run ./cmd/tree-sitter compile --os macos --arch arm64
+go run ./cmd/tree-sitter compile --os macos --arch amd64
+
+# Compile for Linux host
+go run ./cmd/tree-sitter compile --os linux --arch amd64
+
+# Statically validate foreign binaries, dynamically validate host binaries, and publish the release catalog
+go run ./cmd/tree-sitter move --both --force
+```
 
 ## Manifest schema
 

@@ -92,7 +92,7 @@ func (m *Mover) Move(ctx context.Context, cfg *_jsii.Config, req _jsii.MoveReque
 		return err
 	}
 
-	items, err := collectReleaseValidationItems(stage, cfg)
+	items, err := collectReleaseValidationItems(stage, cfg, languages, staged)
 	if err != nil {
 		return err
 	}
@@ -116,7 +116,7 @@ func (m *Mover) Move(ctx context.Context, cfg *_jsii.Config, req _jsii.MoveReque
 	if err := errors.Join(preparationErrors...); err != nil {
 		return err
 	}
-	if err := validateCatalog(stage, cfg, measuredABI); err != nil {
+	if err := validateCatalog(stage, languages, measuredABI); err != nil {
 		return fmt.Errorf("validate staged catalog: %w", err)
 	}
 	if err := publishAtomic(stage, base); err != nil {
@@ -136,7 +136,7 @@ func (m *Mover) Move(ctx context.Context, cfg *_jsii.Config, req _jsii.MoveReque
 }
 
 func (m *Mover) stageLanguage(cfg *_jsii.Config, stage string, lang _jsii.Language, req _jsii.MoveRequest) (stagedLanguage, error) {
-	sourceBinaries, err := collectBinaries(binaryDir(cfg, lang), lang)
+	sourceBinaries, err := collectSourceBinaries(cfg, lang)
 	if err != nil || len(sourceBinaries) == 0 {
 		return stagedLanguage{}, fmt.Errorf("compiled binaries not found in %q; run `tree-sitter compile` first", binaryDir(cfg, lang))
 	}
@@ -191,10 +191,66 @@ func (m *Mover) stageLanguage(cfg *_jsii.Config, stage string, lang _jsii.Langua
 	return result, nil
 }
 
-func collectReleaseValidationItems(stage string, cfg *_jsii.Config) ([]ValidationItem, error) {
+func candidateBinaryDirs(cfg *_jsii.Config, lang _jsii.Language) []string {
+	var dirs []string
+	seen := make(map[string]struct{})
+	add := func(dir string) {
+		if dir == "" {
+			return
+		}
+		cleaned := filepath.Clean(dir)
+		if _, ok := seen[cleaned]; !ok {
+			seen[cleaned] = struct{}{}
+			dirs = append(dirs, cleaned)
+		}
+	}
+
+	add(binaryDir(cfg, lang))
+	add(filepath.Join(buildRootDir(cfg, lang), "bin"))
+	if cfg != nil {
+		for _, t := range cfg.Targets {
+			resolved, err := resolveTarget(t.OS, t.Arch)
+			if err == nil {
+				add(binaryDirForTarget(cfg, lang, resolved))
+			}
+		}
+	}
+	return dirs
+}
+
+func collectSourceBinaries(cfg *_jsii.Config, lang _jsii.Language) ([]string, error) {
+	candidateDirs := candidateBinaryDirs(cfg, lang)
+	seenFiles := make(map[string]string)
+	for _, dir := range candidateDirs {
+		binaries, err := collectBinaries(dir, lang)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, err
+		}
+		for _, b := range binaries {
+			filename := filepath.Base(b)
+			if _, exists := seenFiles[filename]; !exists {
+				seenFiles[filename] = b
+			}
+		}
+	}
+	if len(seenFiles) == 0 {
+		return nil, fmt.Errorf("compiled binaries not found in %q; run `tree-sitter compile` first", binaryDir(cfg, lang))
+	}
+	var allBinaries []string
+	for _, b := range seenFiles {
+		allBinaries = append(allBinaries, b)
+	}
+	sort.Strings(allBinaries)
+	return allBinaries, nil
+}
+
+func collectReleaseValidationItems(stage string, cfg *_jsii.Config, languages []_jsii.Language, staged ...map[string]stagedLanguage) ([]ValidationItem, error) {
 	var items []ValidationItem
 	var collectionErrors []error
-	for _, lang := range cfg.Languages {
+	for _, lang := range languages {
 		grammarDir := filepath.Join(stage, lang.Name)
 		binaries, err := collectBinaries(grammarDir, lang)
 		if err != nil || len(binaries) == 0 {
@@ -212,16 +268,43 @@ func collectReleaseValidationItems(stage string, cfg *_jsii.Config) ([]Validatio
 				collectionErrors = append(collectionErrors, fmt.Errorf("%s: %w", lang.Name, err))
 				continue
 			}
-			items = append(items, ValidationItem{Language: lang, BinaryPath: binaryPath, Platform: platform, Arch: arch, NodeTypesPath: filepath.Join(grammarDir, "node-types.json"), QueryPaths: queryPaths, Sample: lang.Sample})
+
+			var prov *BinaryProvenance
+			var genABI uint32
+			if len(staged) > 0 && staged[0] != nil {
+				if st, ok := staged[0][lang.Name]; ok {
+					if p, ok := st.provenance[binaryPath]; ok {
+						prov = &p
+						if p.GenerateABI != nil && *p.GenerateABI > 0 {
+							genABI = uint32(*p.GenerateABI)
+						}
+					}
+				}
+			}
+			if genABI == 0 && cfg != nil && cfg.GenerateABI > 0 {
+				genABI = uint32(cfg.GenerateABI)
+			}
+
+			items = append(items, ValidationItem{
+				Language:      lang,
+				BinaryPath:    binaryPath,
+				Platform:      platform,
+				Arch:          arch,
+				NodeTypesPath: filepath.Join(grammarDir, "node-types.json"),
+				QueryPaths:    queryPaths,
+				Sample:        lang.Sample,
+				GenerateABI:   genABI,
+				Provenance:    prov,
+			})
 		}
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i].BinaryPath < items[j].BinaryPath })
 	return items, errors.Join(collectionErrors...)
 }
 
-func validateCatalog(stage string, cfg *_jsii.Config, measuredABI map[string]uint32) error {
+func validateCatalog(stage string, languages []_jsii.Language, measuredABI map[string]uint32) error {
 	var validationErrors []error
-	for _, lang := range cfg.Languages {
+	for _, lang := range languages {
 		manifestPath := filepath.Join(stage, lang.Name, "manifest.json")
 		payload, err := os.ReadFile(manifestPath)
 		if err != nil {

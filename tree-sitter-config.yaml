@@ -1,13 +1,36 @@
 version: "2.0"
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Build toolchain
+# ──────────────────────────────────────────────────────────────────────────────
+
+# Directory used for cloning grammar repos and staging intermediate artifacts.
 build_dir: "build"
+
+# tree-sitter CLI version that must be installed and on PATH (npm install -g tree-sitter-cli).
 tree_sitter_cli_version: "0.26.8"
+
+# ABI version passed to `tree-sitter generate --abi`.
 generate_abi: 15
+
+# C/C++ compiler flags applied when building shared libraries.
 build_flags:
   - "-O2"
   - "-fPIC"
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Active compilation target
+# ──────────────────────────────────────────────────────────────────────────────
+
+# Set OS_TARGET to one of the keys under `targets` to pick a cross-compilation
+# target. This is the default target used by `make compile` and `make release`.
+# Override per-invocation with: go run ./cmd/tree-sitter compile --os linux --arch amd64
 OS_TARGET: "linux"
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Compiler toolchain definitions
+# Each entry name must match a possible OS_TARGET value.
+# ──────────────────────────────────────────────────────────────────────────────
 
 targets:
   linux:
@@ -17,6 +40,7 @@ targets:
     compiler: "gcc"
     cxx: "g++"
     compiler_version: "14.2.0"
+
   windows:
     os: "windows"
     arch: "amd64"
@@ -24,6 +48,7 @@ targets:
     compiler: "x86_64-w64-mingw32-gcc"
     cxx: "x86_64-w64-mingw32-g++"
     compiler_version: "14.2.0"
+
   macos-amd64:
     os: "macos"
     arch: "amd64"
@@ -31,6 +56,7 @@ targets:
     compiler: "o64-clang"
     cxx: "o64-clang++"
     compiler_version: "18.1.8"
+
   macos-arm64:
     os: "macos"
     arch: "arm64"
@@ -39,23 +65,25 @@ targets:
     cxx: "oa64-clang++"
     compiler_version: "18.1.8"
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Grammar languages
+#
+# Versions here are kept in sync with go.mod via:
+#   make sync-config            (preview changes)
+#   make sync-config-apply      (apply changes)
+#
+# Fields:
+#   name         - identifier used in file paths and CLI flags
+#   grammar      - exported C symbol suffix (defaults to name with . and - stripped)
+#   constructor  - CGo function name (must equal tree_sitter_<grammar>)
+#   version      - Go module version from go.mod
+#   repository   - upstream grammar git repository URL
+#   revision     - pinned full 40-char commit SHA (required for reproducible builds)
+#   source_subdir- subdirectory within the repo (for multi-grammar repos like typescript)
+#   sample       - minimal code snippet used to smoke-test the compiled parser
+# ──────────────────────────────────────────────────────────────────────────────
+
 languages:
-  - name: "python"
-    grammar: "python"
-    constructor: "tree_sitter_python"
-    version: "v0.25.0"
-    repository: "https://github.com/tree-sitter/tree-sitter-python.git"
-    revision: "293fdc02038ee2bf0e2e206711b69c90ac0d413f"
-    sample: "x = 1\n"
-
-  - name: "go"
-    grammar: "go"
-    constructor: "tree_sitter_go"
-    version: "v0.25.0"
-    repository: "https://github.com/tree-sitter/tree-sitter-go.git"
-    revision: "1547678a9da59885853f5f5cc8a99cc203fa2e2c"
-    sample: "package p\n"
-
   - name: "c"
     grammar: "c"
     constructor: "tree_sitter_c"
@@ -63,14 +91,6 @@ languages:
     repository: "https://github.com/tree-sitter/tree-sitter-c.git"
     revision: "b780e47fc780ddc8da13afa35a3f4ed5c157823d"
     sample: "int main(void) { return 0; }\n"
-
-  - name: "cpp"
-    grammar: "cpp"
-    constructor: "tree_sitter_cpp"
-    version: "v0.23.4"
-    repository: "https://github.com/tree-sitter/tree-sitter-cpp.git"
-    revision: "f41e1a044c8a84ea9fa8577fdd2eab92ec96de02"
-    sample: "#include <vector>\nint main() { std::vector<int> values; }\n"
 
   - name: "c-sharp"
     grammar: "c_sharp"
@@ -80,46 +100,13 @@ languages:
     revision: "cac6d5fb595f5811a076336682d5d595ac1c9e85"
     sample: "class Program { static void Main() {} }\n"
 
-  - name: "rust"
-    grammar: "rust"
-    constructor: "tree_sitter_rust"
-    version: "v0.24.2"
-    repository: "https://github.com/tree-sitter/tree-sitter-rust.git"
-    revision: "77a3747266f4d621d0757825e6b11edcbf991ca5"
-    sample: "fn main() { let x: i32 = 1; }\n"
-
-  - name: "typescript"
-    grammar: "typescript"
-    constructor: "tree_sitter_typescript"
-    version: "v0.23.3-0.20250130221139-75b3874edb2d"
-    repository: "https://github.com/tree-sitter/tree-sitter-typescript.git"
-    revision: "75b3874edb2dc714fb1fd77a32013d0f8699989f"
-    source_subdir: "typescript"
-    sample: "const x: number = 1;\n"
-
-  - name: "javascript"
-    grammar: "javascript"
-    constructor: "tree_sitter_javascript"
-    version: "v0.25.0"
-    repository: "https://github.com/tree-sitter/tree-sitter-javascript.git"
-    revision: "44c892e0be055ac465d5eeddae6d3e194424e7de"
-    sample: "const x = 1;\n"
-
-  - name: "java"
-    grammar: "java"
-    constructor: "tree_sitter_java"
-    version: "v0.23.5"
-    repository: "https://github.com/tree-sitter/tree-sitter-java.git"
-    revision: "94703d5a6bed02b98e438d7cad1136c01a60ba2c"
-    sample: "class A {}\n"
-
-  - name: "html"
-    grammar: "html"
-    constructor: "tree_sitter_html"
-    version: "v0.23.2"
-    repository: "https://github.com/tree-sitter/tree-sitter-html.git"
-    revision: "5a5ca8551a179998360b4a4ca2c0f366a35acc03"
-    sample: "<div></div>\n"
+  - name: "cpp"
+    grammar: "cpp"
+    constructor: "tree_sitter_cpp"
+    version: "v0.23.4"
+    repository: "https://github.com/tree-sitter/tree-sitter-cpp.git"
+    revision: "f41e1a044c8a84ea9fa8577fdd2eab92ec96de02"
+    sample: "#include <vector>\nint main() { std::vector<int> values; }\n"
 
   - name: "css"
     grammar: "css"
@@ -129,46 +116,21 @@ languages:
     revision: "dda5cfc5722c429eaba1c910ca32c2c0c5bb1a3f"
     sample: "a { color: red; }\n"
 
-  - name: "tsx"
-    grammar: "tsx"
-    constructor: "tree_sitter_tsx"
-    version: "v0.23.3-0.20250130221139-75b3874edb2d"
-    repository: "https://github.com/tree-sitter/tree-sitter-typescript.git"
-    revision: "75b3874edb2dc714fb1fd77a32013d0f8699989f"
-    source_subdir: "tsx"
-    sample: "const x = <div />;\n"
+  - name: "cypher"
+    grammar: "cypher"
+    constructor: "tree_sitter_cypher"
+    version: "v0.0.2-0.20241111152014-775717a2de6c"
+    repository: "https://github.com/simplificare-org/tree-sitter-cypher.git"
+    revision: "775717a2de6ca76a5a75e8076b411dbc1ae4c281"
+    sample: "MATCH (n) RETURN n;\n"
 
-  - name: "json"
-    grammar: "json"
-    constructor: "tree_sitter_json"
-    version: "v0.24.8"
-    repository: "https://github.com/tree-sitter/tree-sitter-json.git"
-    revision: "ee35a6ebefcef0c5c416c0d1ccec7370cfca5a24"
-    sample: "{}\n"
-
-  - name: "yaml"
-    grammar: "yaml"
-    constructor: "tree_sitter_yaml"
-    version: "v0.7.2"
-    repository: "https://github.com/tree-sitter-grammars/tree-sitter-yaml.git"
-    revision: "7708026449bed86239b1cd5bce6e3c34dbca6415"
-    sample: "x: 1\n"
-
-  - name: "toml"
-    grammar: "toml"
-    constructor: "tree_sitter_toml"
-    version: "v0.7.0"
-    repository: "https://github.com/tree-sitter-grammars/tree-sitter-toml.git"
-    revision: "64b56832c2cffe41758f28e05c756a3a98d16f41"
-    sample: "x = 1\n"
-
-  - name: "proto"
-    grammar: "proto"
-    constructor: "tree_sitter_proto"
-    version: "v0.0.0-20260901194749-6c878d18628e"
-    repository: "https://github.com/coder3101/tree-sitter-proto.git"
-    revision: "6c878d18628ebbff3474479d2fdd6d8ba1954c3e"
-    sample: "syntax = \"proto3\"; message X {}\n"
+  - name: "go"
+    grammar: "go"
+    constructor: "tree_sitter_go"
+    version: "v0.25.0"
+    repository: "https://github.com/tree-sitter/tree-sitter-go.git"
+    revision: "1547678a9da59885853f5f5cc8a99cc203fa2e2c"
+    sample: "package p\n"
 
   - name: "go.mod"
     grammar: "gomod"
@@ -186,6 +148,62 @@ languages:
     revision: "afd6da80a9509c2edbc0f3ea540564d100babd67"
     sample: "example.com/x v1.0.0 h1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n"
 
+  - name: "html"
+    grammar: "html"
+    constructor: "tree_sitter_html"
+    version: "v0.23.2"
+    repository: "https://github.com/tree-sitter/tree-sitter-html.git"
+    revision: "5a5ca8551a179998360b4a4ca2c0f366a35acc03"
+    sample: "<div></div>\n"
+
+  - name: "java"
+    grammar: "java"
+    constructor: "tree_sitter_java"
+    version: "v0.23.5"
+    repository: "https://github.com/tree-sitter/tree-sitter-java.git"
+    revision: "94703d5a6bed02b98e438d7cad1136c01a60ba2c"
+    sample: "class A {}\n"
+
+  - name: "javascript"
+    grammar: "javascript"
+    constructor: "tree_sitter_javascript"
+    version: "v0.25.0"
+    repository: "https://github.com/tree-sitter/tree-sitter-javascript.git"
+    revision: "44c892e0be055ac465d5eeddae6d3e194424e7de"
+    sample: "const x = 1;\n"
+
+  - name: "json"
+    grammar: "json"
+    constructor: "tree_sitter_json"
+    version: "v0.24.8"
+    repository: "https://github.com/tree-sitter/tree-sitter-json.git"
+    revision: "ee35a6ebefcef0c5c416c0d1ccec7370cfca5a24"
+    sample: "{}\n"
+
+  - name: "proto"
+    grammar: "proto"
+    constructor: "tree_sitter_proto"
+    version: "v0.0.0-20260901194749-6c878d18628e"
+    repository: "https://github.com/coder3101/tree-sitter-proto.git"
+    revision: "6c878d18628ebbff3474479d2fdd6d8ba1954c3e"
+    sample: "syntax = \"proto3\"; message X {}\n"
+
+  - name: "python"
+    grammar: "python"
+    constructor: "tree_sitter_python"
+    version: "v0.25.0"
+    repository: "https://github.com/tree-sitter/tree-sitter-python.git"
+    revision: "293fdc02038ee2bf0e2e206711b69c90ac0d413f"
+    sample: "x = 1\n"
+
+  - name: "rust"
+    grammar: "rust"
+    constructor: "tree_sitter_rust"
+    version: "v0.24.2"
+    repository: "https://github.com/tree-sitter/tree-sitter-rust.git"
+    revision: "77a3747266f4d621d0757825e6b11edcbf991ca5"
+    sample: "fn main() { let x: i32 = 1; }\n"
+
   - name: "sql"
     grammar: "sql"
     constructor: "tree_sitter_sql"
@@ -194,20 +212,67 @@ languages:
     revision: "1156b55f26a5949784827f21c6abc72c05e26600"
     sample: "SELECT 1;\n"
 
-  - name: "cypher"
-    grammar: "cypher"
-    constructor: "tree_sitter_cypher"
-    version: "v0.0.2-0.20241111152014-775717a2de6c"
-    repository: "https://github.com/simplificare-org/tree-sitter-cypher.git"
-    revision: "775717a2de6ca76a5a75e8076b411dbc1ae4c281"
-    sample: "MATCH (n) RETURN n;\n"
+  - name: "toml"
+    grammar: "toml"
+    constructor: "tree_sitter_toml"
+    version: "v0.7.0"
+    repository: "https://github.com/tree-sitter-grammars/tree-sitter-toml.git"
+    revision: "64b56832c2cffe41758f28e05c756a3a98d16f41"
+    sample: "x = 1\n"
+
+  # typescript and tsx share the same repository; each lives in its own subdir.
+  - name: "tsx"
+    grammar: "tsx"
+    constructor: "tree_sitter_tsx"
+    version: "v0.23.3-0.20250130221139-75b3874edb2d"
+    repository: "https://github.com/tree-sitter/tree-sitter-typescript.git"
+    revision: "75b3874edb2dc714fb1fd77a32013d0f8699989f"
+    source_subdir: "tsx"
+    sample: "const x = <div />;\n"
+
+  - name: "typescript"
+    grammar: "typescript"
+    constructor: "tree_sitter_typescript"
+    version: "v0.23.3-0.20250130221139-75b3874edb2d"
+    repository: "https://github.com/tree-sitter/tree-sitter-typescript.git"
+    revision: "75b3874edb2dc714fb1fd77a32013d0f8699989f"
+    source_subdir: "typescript"
+    sample: "const x: number = 1;\n"
+
+  - name: "yaml"
+    grammar: "yaml"
+    constructor: "tree_sitter_yaml"
+    version: "v0.7.2"
+    repository: "https://github.com/tree-sitter-grammars/tree-sitter-yaml.git"
+    revision: "7708026449bed86239b1cd5bce6e3c34dbca6415"
+    sample: "x: 1\n"
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Output paths and publication settings
+# ──────────────────────────────────────────────────────────────────────────────
 
 output:
+  # Root directory where grammar artifacts (binaries, node-types.json, queries,
+  # and manifest.json) are published.  Each language gets its own sub-directory:
+  #   data/tree-sitter/grammar/<name>/
   grammar_base: "data/tree-sitter/grammar"
+
+  # Template for the intermediate build directory (grammar source + generated files).
+  # Supported placeholders: {lang}, {language}, {os}, {goos}, {arch}, {version}
   grammar_build: "build/{lang}/{arch}"
+
+  # Template for the compiled binary output directory.
   grammar_compile: "build/{lang}/{arch}"
+
+  # Always emit manifest.json alongside the published binaries.
   generate_manifest: true
+
+  # Default file-copy mode when running `tree-sitter move`.
+  #   --json   copy binaries + node-types.json only
+  #   --scm    copy binaries + queries/ only
+  #   --both   copy binaries, node-types.json, and queries/
   default_move_mode: "--both"
+
   supported_move_modes:
     - "--json"
     - "--scm"

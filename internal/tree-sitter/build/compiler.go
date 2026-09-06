@@ -60,7 +60,7 @@ func (c *Compiler) compileLanguage(ctx context.Context, cfg *_jsii.Config, lang 
 		return fmt.Errorf("source directory %q not found; run `tree-sitter build` first", src)
 	}
 
-	outDir := binaryDir(cfg, lang)
+	outDir := binaryDirForTarget(cfg, lang, target)
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return fmt.Errorf("create binary output directory %q: %w", outDir, err)
 	}
@@ -86,13 +86,22 @@ func (c *Compiler) compileLanguage(ctx context.Context, cfg *_jsii.Config, lang 
 	}
 
 	fmt.Fprintf(c.stdout, "compiling %s for %s/%s\n", lang.Name, target.Platform, target.Arch)
+	isCross := !isHostTarget(target.Platform, target.Arch)
 	if err := c.runner.Run(ctx, _jsii.Command{
-		Name: "tree-sitter",
-		Args: []string{"build", "--output", absoluteOutputPath},
-		Dir:  src,
-		Env:  toolchainEnv,
+		Name:          "tree-sitter",
+		Args:          []string{"build", "--output", absoluteOutputPath},
+		Dir:           src,
+		Env:           toolchainEnv,
+		SilenceStderr: isCross,
 	}); err != nil {
-		return fmt.Errorf("run tree-sitter build: %w", err)
+		if isCross && isDlopenError(err) {
+			if stat, statErr := os.Stat(absoluteOutputPath); statErr == nil && stat.Mode().IsRegular() && stat.Size() > 0 {
+				err = nil
+			}
+		}
+		if err != nil {
+			return fmt.Errorf("run tree-sitter build: %w", err)
+		}
 	}
 
 	if info, err := os.Stat(absoluteOutputPath); err != nil {
@@ -134,20 +143,26 @@ func (c *Compiler) toolchainEnv(ctx context.Context, baseDir string, target targ
 	}
 
 	if target.Compiler != "" {
-		cc, err := c.lookup.LookPath(target.Compiler)
-		if err != nil {
-			return nil, compilerIdentity{}, nil, fmt.Errorf("configured compiler %q not found: %w", target.Compiler, err)
-		}
-		env["CC"] = cc
-		if target.CXX != "" {
-			cxx, err := c.lookup.LookPath(target.CXX)
-			if err != nil {
-				return nil, compilerIdentity{}, nil, fmt.Errorf("configured C++ compiler %q not found: %w", target.CXX, err)
+		if cc, err := c.lookup.LookPath(target.Compiler); err == nil {
+			cxxFound := true
+			var cxxPath string
+			if target.CXX != "" {
+				if cxx, err := c.lookup.LookPath(target.CXX); err == nil {
+					cxxPath = cxx
+				} else {
+					cxxFound = false
+				}
 			}
-			env["CXX"] = cxx
+			if cxxFound {
+				if identity, err := c.measureCompiler(ctx, cc, target.CompilerVersion); err == nil {
+					env["CC"] = cc
+					if cxxPath != "" {
+						env["CXX"] = cxxPath
+					}
+					return env, identity, func() {}, nil
+				}
+			}
 		}
-		identity, err := c.measureCompiler(ctx, cc, target.CompilerVersion)
-		return env, identity, func() {}, err
 	}
 
 	if target.GOOS == runtime.GOOS && target.Arch == runtime.GOARCH {
@@ -165,18 +180,26 @@ func (c *Compiler) toolchainEnv(ctx context.Context, baseDir string, target targ
 		if cxx != "" {
 			env["CXX"] = cxx
 		}
-		identity, err := c.measureCompiler(ctx, cc, target.CompilerVersion)
-		return env, identity, func() {}, err
+		identity, err := c.measureCompiler(ctx, cc, "")
+		if err == nil {
+			return env, identity, func() {}, nil
+		}
 	}
 
 	zigPath, err := c.lookup.LookPath("zig")
 	if err != nil {
+		if target.Compiler != "" {
+			return nil, compilerIdentity{}, nil, fmt.Errorf("no compiler toolchain available for %s/%s; install %s, zig, or a target-specific cross-compiler", target.Platform, target.Arch, target.Compiler)
+		}
 		return nil, compilerIdentity{}, nil, fmt.Errorf("no compiler toolchain available for %s/%s; install zig or a target-specific cross-compiler", target.Platform, target.Arch)
 	}
 
 	tempDir, err := os.MkdirTemp(baseDir, "zig-toolchain-")
 	if err != nil {
 		return nil, compilerIdentity{}, nil, fmt.Errorf("create zig toolchain wrappers: %w", err)
+	}
+	if abs, err := filepath.Abs(tempDir); err == nil {
+		tempDir = abs
 	}
 
 	ccWrapper := filepath.Join(tempDir, "cc-wrapper")
@@ -195,7 +218,7 @@ func (c *Compiler) toolchainEnv(ctx context.Context, baseDir string, target targ
 	env["CC"] = ccWrapper
 	env["CXX"] = cxxWrapper
 
-	identity, err := c.measureCompiler(ctx, zigPath, target.CompilerVersion)
+	identity, err := c.measureCompiler(ctx, zigPath, "")
 	if err != nil {
 		_ = os.RemoveAll(tempDir)
 		return nil, compilerIdentity{}, nil, err
@@ -206,7 +229,11 @@ func (c *Compiler) toolchainEnv(ctx context.Context, baseDir string, target targ
 }
 
 func (c *Compiler) measureCompiler(ctx context.Context, executable, expectedVersion string) (compilerIdentity, error) {
-	output, err := c.runner.Output(ctx, _jsii.Command{Name: executable, Args: []string{"--version"}})
+	versionArg := "--version"
+	if base := filepath.Base(executable); base == "zig" || strings.HasPrefix(base, "zig") {
+		versionArg = "version"
+	}
+	output, err := c.runner.Output(ctx, _jsii.Command{Name: executable, Args: []string{versionArg}})
 	if err != nil {
 		return compilerIdentity{}, fmt.Errorf("measure compiler version: %w", err)
 	}
@@ -271,21 +298,55 @@ func compilerCandidates(target target) []compilerPair {
 func zigTargetTriple(target target) string {
 	switch target.GOOS {
 	case "windows":
+		if target.Arch == "arm64" {
+			return "aarch64-windows-gnu"
+		}
 		return "x86_64-windows-gnu"
 	case "darwin":
 		if target.Arch == "arm64" {
-			return "aarch64-macos-none"
+			return "aarch64-macos"
 		}
-		return "x86_64-macos-none"
+		return "x86_64-macos"
 	default:
+		if target.Arch == "arm64" {
+			return "aarch64-linux-gnu"
+		}
 		return "x86_64-linux-gnu"
 	}
 }
 
 func writeWrapper(path, zigPath, compiler, target string) error {
-	content := fmt.Sprintf("#!/bin/sh\nexec %q %s -target %s \"$@\"\n", zigPath, compiler, target)
+	content := fmt.Sprintf(`#!/usr/bin/env bash
+args=()
+skip=0
+for arg in "$@"; do
+    if [ "$skip" -eq 1 ]; then
+        skip=0
+        continue
+    fi
+    if [ "$arg" = "-target" ]; then
+        skip=1
+        continue
+    fi
+    case "$arg" in
+        --target=*) ;;
+        *) args+=("$arg") ;;
+    esac
+done
+exec %q %s -target %s "${args[@]}"
+`, zigPath, compiler, target)
 	if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
 		return fmt.Errorf("write compiler wrapper %q: %w", path, err)
 	}
 	return nil
+}
+
+func isDlopenError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "dlopen failed") ||
+		strings.Contains(msg, "Error opening dynamic library") ||
+		strings.Contains(msg, "cannot open shared object file")
 }
