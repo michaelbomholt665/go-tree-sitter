@@ -9,7 +9,7 @@ This guide demonstrates how to build, compile, validate, and publish Tree-sitter
 To run the complete host release pipeline (build sources, compile native libraries, losslessly generate `compact-node-types.yaml`, publish to catalog, and automatically delete intermediate build caches):
 
 ```bash
-# Build, compile, compact, publish, and clean all 38 grammars
+# Build, compile, compact, publish, and clean all 42 grammars
 make build-all
 
 # Or run the legacy release target:

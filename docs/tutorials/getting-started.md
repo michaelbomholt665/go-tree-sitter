@@ -243,6 +243,6 @@ Congratulations! You have successfully built, compiled, validated, published, an
 
 To explore further:
 - Try `go run ./cmd/ts-build wizard` for an interactive guided experience — the recommended way to run the pipeline day-to-day without memorising flags.
-- Learn how to run full releases for all 38 languages in [How to Build and Release Grammars](file:///home/michael/projects/go/tree-sitter/docs/how-to/build-and-release-grammars.md).
+- Learn how to run full releases for all 42 languages in [How to Build and Release Grammars](file:///home/michael/projects/go/tree-sitter/docs/how-to/build-and-release-grammars.md).
 - Learn how to compile Windows and macOS binaries in [How to Cross-Compile for Windows and macOS](file:///home/michael/projects/go/tree-sitter/docs/how-to/cross-compile-grammars.md).
 - Understand how validation prevents corrupted releases in [Dual-Mode Validation Mechanics](file:///home/michael/projects/go/tree-sitter/docs/explanation/dual-mode-validation.md).

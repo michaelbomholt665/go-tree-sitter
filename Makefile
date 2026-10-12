@@ -1,15 +1,19 @@
 TREE_SITTER         ?= tree-sitter
-TREE_SITTER_VERSION ?= 0.26.8
+TREE_SITTER_VERSION ?= 0.27.0
 NPM                 ?= npm
 CONFIG              ?= tree-sitter-config.yaml
-LANG                ?=
-LANGUAGE            ?=
-LANG_ARG            ?= $(if $(LANG),-l $(LANG),$(if $(LANGUAGE),-l $(LANGUAGE),))
+# Ignore environment LANG (system locale like en_US.UTF-8) unless explicitly passed on command line
+ifeq ($(origin LANG),environment)
+  EFFECTIVE_LANG := $(LANGUAGE)
+else
+  EFFECTIVE_LANG := $(if $(LANG),$(LANG),$(LANGUAGE))
+endif
+LANG_ARG            ?= $(if $(EFFECTIVE_LANG),-l $(EFFECTIVE_LANG),)
 
 .PHONY: help build sync-config sync-config-apply \
         grammar-build build-all \
         compile compile-wasm compile-linux compile-windows compile-mac compile-all \
-        move \
+        move compact check-compact \
         release release-linux release-windows release-mac release-all \
         test fmt vet lint tool-help \
         check-tree-sitter install-tree-sitter-cli \
@@ -34,6 +38,10 @@ help:
 	@echo "  make compile-all            Compile for all platforms"
 	@echo ""
 	@echo "  make move                   Publish artifacts to data/tree-sitter/grammar/, generate compact node types"
+	@echo "  make compact                Generate/update compact node types without rebuilding"
+	@echo "                              (Supports LANG=<name>, e.g. make compact LANG=python)"
+	@echo "  make check-compact          Verify compact node types against node-types.json without rewriting"
+	@echo "                              (Supports LANG=<name>, e.g. make check-compact LANG=python)"
 	@echo ""
 	@echo "  make release                Full pipeline for the default target (grammar-build + compile + move)"
 	@echo "  make release-linux          Full pipeline for Linux amd64"
@@ -114,6 +122,14 @@ compile-all: compile-linux compile-windows compile-mac
 
 move:
 	go run ./cmd/ts-build move --config $(CONFIG) --compact --force $(LANG_ARG)
+
+# ── Compact node types (standalone without rebuild) ───────────────────────────
+
+compact:
+	go run ./cmd/ts-build compact --config $(CONFIG) $(LANG_ARG)
+
+check-compact:
+	go run ./cmd/ts-build compact --config $(CONFIG) --check $(LANG_ARG)
 
 # ── Release pipelines ─────────────────────────────────────────────────────────
 

@@ -6,10 +6,10 @@
 > - running it uncompiled, use "go run ./cmd/...", if its in your PATH, use ts-build
 
 [![Go Version](https://img.shields.io/badge/Go-1.26+-00ADD8?style=flat&logo=go)](https://go.dev/)
-[![Tree-sitter CLI](https://img.shields.io/badge/Tree--sitter_CLI-0.26.8-2B8A3E?style=flat&logo=tree-sitter)](https://github.com/tree-sitter/tree-sitter)
+[![Tree-sitter CLI](https://img.shields.io/badge/Tree--sitter_CLI-0.27.0-2B8A3E?style=flat&logo=tree-sitter)](https://github.com/tree-sitter/tree-sitter)
 [![Parser ABI](https://img.shields.io/badge/Parser_ABI-15_(backwards_13--15)-blue?style=flat)](docs/explanation/abi-evolution-and-runtime-compatibility.md)
 [![Platforms](https://img.shields.io/badge/Platforms-Linux_|_macOS_|_Windows_|_WASM-lightgrey?style=flat)](#multi-platform-compilation)
-[![Catalog](https://img.shields.io/badge/Supported_Grammars-38_Languages-success?style=flat)](docs/reference/grammar-catalog.md)
+[![Catalog](https://img.shields.io/badge/Supported_Grammars-42_Languages-success?style=flat)](docs/reference/grammar-catalog.md)
 
 A reproducible Tree-sitter grammar builder, cross-compiler, AST compressor, validator, and publication toolchain for Go applications and downstream AI agents.
 
@@ -20,7 +20,7 @@ A reproducible Tree-sitter grammar builder, cross-compiler, AST compressor, vali
 ## Features
 
 - **Deterministic Reproducibility**: Every grammar in [`tree-sitter-config.yaml`](tree-sitter-config.yaml) is pinned to a full 40-character hexadecimal git commit SHA (`revision`). Short commits, branch names, and tags are strictly rejected.
-- **AI-Friendly Compact Node Types (`compact-node-types.yaml`)**: Built for LLMs and autonomous coding agents. Losslessly converts verbose ~100 KB `node-types.json` files into compact ~20 KB YAML files (**75%–83% token reduction**) with 100% bidirectional schema validation to prevent LLM context rot.
+- **AI-Friendly Compact Node Types (`compact-node-types.yaml`)**: Built for LLMs and autonomous coding agents. Converts verbose ~100 KB `node-types.json` files into compact ~20 KB YAML files (**75%–83% token reduction**) with full semantic preservation (anonymous tokens inventory, operator alternatives, mixed named/anonymous references, independent requiredness and multiplicity, `root`/`extra` metadata) and 100% bidirectional schema validation to prevent LLM context rot.
 - **Dual-Mode Binary Validation**:
   - **Host Target (e.g. Linux on Linux)**: Dynamic runtime validation via `dlopen` executing grammar constructors, ABI measurements, sample parsing, syntax error rejection, and query compilation.
   - **Foreign Target (e.g. Windows `.dll`, macOS `.dylib` on Linux)**: Static binary header inspection validating Windows PE (`debug/pe`) and macOS Mach-O (`debug/macho`) export tables, architecture signatures, and symbols without foreign emulators.
@@ -36,7 +36,7 @@ A reproducible Tree-sitter grammar builder, cross-compiler, AST compressor, vali
 Ensure the following tools are installed on your host machine:
 
 - **Go 1.26 or higher**
-- **Tree-sitter CLI 0.26.8** (install via `make install-tree-sitter-cli` or `npm install -g tree-sitter-cli@0.26.8`)
+- **Tree-sitter CLI 0.27.0** (install via `make install-tree-sitter-cli` or `npm install -g tree-sitter-cli@0.27.0`)
 - **C/C++ Compiler**: GCC, Clang, MinGW (for Windows cross-compilation), or [Zig](https://ziglang.org/) (for universal cross-compilation)
 - **Git**
 
@@ -60,7 +60,7 @@ The wizard walks you through four steps:
 1. **Pipeline** — choose how far to run (build only, build+compile, full end-to-end, etc.)
 2. **Target Platforms** — select one or more of Linux, macOS arm64/amd64, Windows, or WebAssembly
 3. **Artifacts & Options** — toggle `manifest.json`, `.scm` query files, compact node types, C sources, `grammar.js`, WASM staging, force-overwrite, and build-cache pruning
-4. **Grammars** — pick any subset of the 38 configured languages (or select all)
+4. **Grammars** — pick any subset of the 42 configured languages (or select all)
 
 A compact summary is shown before anything runs, and you confirm or abort with a single keypress.
 
@@ -175,17 +175,20 @@ ts-build move -l python --wasm --force
 
 ### Generating & Auditing Compact Node Types
 
-Manage token-efficient AST schemas independently using the `compact` subcommand:
+Manage token-efficient AST schemas independently using the `compact` subcommand or Makefile targets without rebuilding grammars:
 
 ```bash
 # Generate compact-node-types.yaml from node-types.json
-ts-build compact -l python
+make compact LANG=python
+# Or: ts-build compact -l python
 
 # Audit lossless schema capture without modifying files (returns code 1 on discrepancy)
-ts-build compact -l python --check
+make check-compact LANG=python
+# Or: ts-build compact -l python --check
 
-# Audit all 38 published grammars in CI
-ts-build compact --check
+# Audit all 42 published grammars in CI
+make check-compact
+# Or: ts-build compact --check
 ```
 
 ---
@@ -200,6 +203,8 @@ ts-build compact --check
 | `make compile-wasm [LANG=...]` | Compiles WebAssembly parser binaries (`tree-sitter-<lang>.wasm`). |
 | `make compile-all` | Cross-compiles for Linux, Windows, and macOS. |
 | `make move [LANG=...]` | Validates binaries, generates compact node types, and atomically publishes. |
+| `make compact [LANG=...]` | Generates and losslessly validates `compact-node-types.yaml` without rebuilding grammars. |
+| `make check-compact [LANG=...]` | Audits existing `compact-node-types.yaml` against `node-types.json` without modifying files. |
 | `make release` | Complete release pipeline for the active target configured in `tree-sitter-config.yaml`. |
 | `make release-all` | Full release pipeline across all supported platforms. |
 | `make sync-config` | Dry-run preview of grammar version synchronizations from `go.mod`. |
@@ -235,7 +240,7 @@ The custom `manifest.json` provides programmatic version control, binary checksu
   "grammar": "python",
   "version": "v0.25.0",
   "compiled_at": "2026-09-06T12:04:17Z",
-  "tree_sitter_version": "0.26.8",
+  "tree_sitter_version": "0.27.0",
   "parser_abi": 15,
   "binaries": [
     {

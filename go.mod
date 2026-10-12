@@ -4,7 +4,7 @@ go 1.26.0
 
 require (
 	github.com/DerekStride/tree-sitter-sql v0.3.11
-	github.com/coder3101/tree-sitter-proto v0.0.0-20260901194749-6c878d18628e
+	github.com/coder3101/tree-sitter-proto v0.0.0-20261007121631-d7d15427321d
 	github.com/pupli/tree-sitter-cypher v0.0.2-0.20241111152014-775717a2de6c
 	github.com/tree-sitter-grammars/tree-sitter-toml v0.7.0
 	github.com/tree-sitter-grammars/tree-sitter-yaml v0.7.2
@@ -40,14 +40,14 @@ require (
 	github.com/tree-sitter-grammars/tree-sitter-make v1.1.1 // indirect
 	github.com/tree-sitter-grammars/tree-sitter-zig v1.1.2 // indirect
 	github.com/tree-sitter/tree-sitter-bash v0.25.1 // indirect
-	github.com/tree-sitter/tree-sitter-haskell v0.23.1 // indirect
+	github.com/tree-sitter/tree-sitter-haskell v0.24.1 // indirect
 	github.com/tree-sitter/tree-sitter-julia v0.25.0 // indirect
-	github.com/tree-sitter/tree-sitter-ocaml v0.25.0 // indirect
-	github.com/tree-sitter/tree-sitter-php v0.24.2 // indirect
+	github.com/tree-sitter/tree-sitter-ocaml v0.26.0 // indirect
+	github.com/tree-sitter/tree-sitter-php v0.25.1 // indirect
 	github.com/tree-sitter/tree-sitter-regex v0.25.0 // indirect
 	github.com/tree-sitter/tree-sitter-ruby v0.23.1 // indirect
 	github.com/tree-sitter/tree-sitter-scala v0.26.2 // indirect
-	github.com/uyha/tree-sitter-cmake v0.7.4 // indirect
+	github.com/uyha/tree-sitter-cmake v0.7.5 // indirect
 	golang.org/x/sys v0.42.0 // indirect
 	golang.org/x/term v0.0.0-20210927222741-03fcf44c2211 // indirect
 	golang.org/x/text v0.4.0 // indirect

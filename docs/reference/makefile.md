@@ -11,7 +11,7 @@ The following variables can be overridden on the command line:
 | Variable | Default | Description |
 | :--- | :--- | :--- |
 | `TREE_SITTER` | `tree-sitter` | Path to the Tree-sitter CLI executable. |
-| `TREE_SITTER_VERSION` | `0.26.8` | Pinned Tree-sitter CLI version installed by `install-tree-sitter-cli`. |
+| `TREE_SITTER_VERSION` | `0.27.0` | Pinned Tree-sitter CLI version installed by `install-tree-sitter-cli`. |
 | `NPM` | `npm` | Node package manager binary used to install `tree-sitter-cli`. |
 | `CONFIG` | `tree-sitter-config.yaml` | Path to configuration YAML file passed to CLI invocations. |
 | `LANG` / `LANGUAGE` | `""` | Optional grammar name filter (e.g., `LANG=python`). If omitted, targets all configured grammars. |
@@ -52,6 +52,8 @@ make release CONFIG=custom-config.yaml
 | `compile-mac` | Compiles shared libraries for macOS `amd64` and `arm64` using Clang or Zig. Supports `LANG=<name>`. |
 | `compile-all` | Compiles for all platform targets in sequence. |
 | `move` | Validates compiled native binaries, losslessly generates `compact-node-types.yaml`, and publishes to `data/tree-sitter/grammar/`, automatically cleaning the intermediate build directory. Supports `LANG=<name>`. |
+| `compact` | Generates and losslessly validates `compact-node-types.yaml` directly from `node-types.json` without rebuilding grammars. Supports `LANG=<name>`. |
+| `check-compact` | Audits existing `compact-node-types.yaml` files against `node-types.json` without modifying files (exits with code 1 on discrepancy). Supports `LANG=<name>`. |
 
 ---
 
@@ -60,7 +62,7 @@ make release CONFIG=custom-config.yaml
 | Target | Description |
 | :--- | :--- |
 | `check-tree-sitter` | Checks if `tree-sitter` is available in `$PATH` and prints installation instructions if missing. |
-| `install-tree-sitter-cli` | Installs the pinned Tree-sitter CLI globally via npm (`npm install -g tree-sitter-cli@0.26.8`). |
+| `install-tree-sitter-cli` | Installs the pinned Tree-sitter CLI globally via npm (`npm install -g tree-sitter-cli@0.27.0`). |
 | `sync-config` | Dry-run preview of grammar version updates from `go.mod` to `tree-sitter-config.yaml`. |
 | `sync-config-apply` | Writes grammar version updates from `go.mod` directly to `tree-sitter-config.yaml`. |
 

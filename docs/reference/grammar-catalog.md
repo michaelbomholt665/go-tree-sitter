@@ -1,6 +1,6 @@
 # Supported Grammar Catalog & Symbol Registry
 
-This document lists all 38 officially configured grammars in [`tree-sitter-config.yaml`](file:///home/michael/projects/go/tree-sitter/tree-sitter-config.yaml) and their bindings in [`internal/grammars/registry.go`](file:///home/michael/projects/go/tree-sitter/internal/grammars/registry.go).
+This document lists all 42 officially configured grammars in [`tree-sitter-config.yaml`](file:///home/michael/projects/go/tree-sitter/tree-sitter-config.yaml) and their bindings in [`internal/grammars/registry.go`](file:///home/michael/projects/go/tree-sitter/internal/grammars/registry.go).
 
 ---
 
@@ -9,9 +9,10 @@ This document lists all 38 officially configured grammars in [`tree-sitter-confi
 | Identifier (`name`) | Grammar (`grammar`) | Exported Constructor | Pinned Version | Pinned Revision SHA | Subdir |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | `bash` | `bash` | `tree_sitter_bash` | `v0.25.1` | `a06c2e4415e9bc0346c6b86d401879ffb44058f7` | |
+| `blade` | `blade` | `tree_sitter_blade` | `v0.12.3` | `cc764dadcbbceb3f259396fef66f970c72e94f96` | |
 | `c` | `c` | `tree_sitter_c` | `v0.24.2` | `b780e47fc780ddc8da13afa35a3f4ed5c157823d` | |
 | `c-sharp` | `c_sharp` | `tree_sitter_c_sharp` | `v0.23.5` | `cac6d5fb595f5811a076336682d5d595ac1c9e85` | |
-| `cmake` | `cmake` | `tree_sitter_cmake` | `v0.7.4` | `ca627bb5828616b6246aafdc3c3222789e728e37` | |
+| `cmake` | `cmake` | `tree_sitter_cmake` | `v0.7.5` | `e997bd0b275ca525ce9befecedf5299031183661` | |
 | `cpp` | `cpp` | `tree_sitter_cpp` | `v0.23.4` | `f41e1a044c8a84ea9fa8577fdd2eab92ec96de02` | |
 | `css` | `css` | `tree_sitter_css` | `v0.25.0` | `dda5cfc5722c429eaba1c910ca32c2c0c5bb1a3f` | |
 | `cypher` | `cypher` | `tree_sitter_cypher` | `v0.0.2-0.20241111152014-775717a2de6c` | `775717a2de6ca76a5a75e8076b411dbc1ae4c281` | |
@@ -20,7 +21,7 @@ This document lists all 38 officially configured grammars in [`tree-sitter-confi
 | `go` | `go` | `tree_sitter_go` | `v0.25.0` | `1547678a9da59885853f5f5cc8a99cc203fa2e2c` | |
 | `go.mod` | `gomod` | `tree_sitter_gomod` | `v1.1.0` | `3b01edce2b9ea6766ca19328d1850e456fde3103` | |
 | `go.sum` | `gosum` | `tree_sitter_gosum` | `v1.0.0` | `afd6da80a9509c2edbc0f3ea540564d100babd67` | |
-| `haskell` | `haskell` | `tree_sitter_haskell` | `v0.23.1` | `c30d812bc90827f1a54106a25bc9a6307f5cdcec` | |
+| `haskell` | `haskell` | `tree_sitter_haskell` | `v0.24.1` | `97288e585b0bd44199720280d067fa35bacd81ff` | |
 | `html` | `html` | `tree_sitter_html` | `v0.23.2` | `5a5ca8551a179998360b4a4ca2c0f366a35acc03` | |
 | `java` | `java` | `tree_sitter_java` | `v0.23.5` | `94703d5a6bed02b98e438d7cad1136c01a60ba2c` | |
 | `javascript` | `javascript` | `tree_sitter_javascript` | `v0.25.0` | `44c892e0be055ac465d5eeddae6d3e194424e7de` | |
@@ -30,16 +31,19 @@ This document lists all 38 officially configured grammars in [`tree-sitter-confi
 | `make` | `make` | `tree_sitter_make` | `v1.1.1` | `5e9e8f8ff3387b0edcaa90f46ddf3629f4cfeb1d` | |
 | `markdown` | `markdown` | `tree_sitter_markdown` | `v0.5.3` | `f969cd3ae3f9fbd4e43205431d0ae286014c05b5` | `tree-sitter-markdown` |
 | `markdown-inline` | `markdown_inline` | `tree_sitter_markdown_inline` | `v0.5.3` | `f969cd3ae3f9fbd4e43205431d0ae286014c05b5` | `tree-sitter-markdown-inline` |
-| `ocaml` | `ocaml` | `tree_sitter_ocaml` | `v0.25.0` | `6902a86ab5b3b80c622030210aae2d8cb95eb775` | `grammars/ocaml` |
-| `ocaml-interface` | `ocaml_interface` | `tree_sitter_ocaml_interface` | `v0.25.0` | `6902a86ab5b3b80c622030210aae2d8cb95eb775` | `grammars/interface` |
-| `php` | `php` | `tree_sitter_php` | `v0.24.2` | `5b5627faaa290d89eb3d01b9bf47c3bb9e797dea` | `php` |
-| `php_only` | `php_only` | `tree_sitter_php_only` | `v0.24.2` | `5b5627faaa290d89eb3d01b9bf47c3bb9e797dea` | `php_only` |
-| `proto` | `proto` | `tree_sitter_proto` | `v0.0.0-20260901194749-6c878d18628e` | `6c878d18628ebbff3474479d2fdd6d8ba1954c3e` | |
+| `ocaml` | `ocaml` | `tree_sitter_ocaml` | `v0.26.0` | `e3c9cf368f68bffd2f81188229aefa7b434eda65` | `grammars/ocaml` |
+| `ocaml-interface` | `ocaml_interface` | `tree_sitter_ocaml_interface` | `v0.26.0` | `e3c9cf368f68bffd2f81188229aefa7b434eda65` | `grammars/interface` |
+| `php` | `php` | `tree_sitter_php` | `v0.25.1` | `58d5643086ae60e93a3746cca648363ee97c8761` | `php` |
+| `php_only` | `php_only` | `tree_sitter_php_only` | `v0.25.1` | `58d5643086ae60e93a3746cca648363ee97c8761` | `php_only` |
+| `proto` | `proto` | `tree_sitter_proto` | `v0.0.0-20261007121631-d7d15427321d` | `d7d15427321da271cb1c25c12735e180ef981473` | |
 | `python` | `python` | `tree_sitter_python` | `v0.25.0` | `293fdc02038ee2bf0e2e206711b69c90ac0d413f` | |
 | `regex` | `regex` | `tree_sitter_regex` | `v0.25.0` | `b2ac15e27fce703d2f37a79ccd94a5c0cbe9720b` | |
 | `ruby` | `ruby` | `tree_sitter_ruby` | `v0.23.1` | `71bd32fb7607035768799732addba884a37a6210` | |
 | `rust` | `rust` | `tree_sitter_rust` | `v0.24.2` | `77a3747266f4d621d0757825e6b11edcbf991ca5` | |
+| `sass` | `sass` | `tree_sitter_sass` | `v0.1.0` | `fb280c41b070657e4ff4d4e5e6eea6cb19efd9b8` | |
 | `scala` | `scala` | `tree_sitter_scala` | `v0.26.2` | `b931fcc338390925eb893d70ad070033f5856ccf` | |
+| `scss` | `scss` | `tree_sitter_scss` | `v1.0.0` | `eb69c8f55ecc17235f43358c65ec644578554f92` | |
+| `solidity` | `solidity` | `tree_sitter_solidity` | `v1.2.13` | `4e938a46c7030dd001bc99e1ac0f0c750ac98254` | |
 | `sql` | `sql` | `tree_sitter_sql` | `v0.3.11` | `1156b55f26a5949784827f21c6abc72c05e26600` | |
 | `toml` | `toml` | `tree_sitter_toml` | `v0.7.0` | `64b56832c2cffe41758f28e05c756a3a98d16f41` | |
 | `tsx` | `tsx` | `tree_sitter_tsx` | `v0.23.3-0.20250130221139-75b3874edb2d` | `75b3874edb2dc714fb1fd77a32013d0f8699989f` | `tsx` |
@@ -54,6 +58,7 @@ This document lists all 38 officially configured grammars in [`tree-sitter-confi
 | Identifier | Upstream Repository | License | Smoke Test Sample |
 | :--- | :--- | :--- | :--- |
 | `bash` | [tree-sitter/tree-sitter-bash](https://github.com/tree-sitter/tree-sitter-bash.git) | MIT | `echo "hello world"` |
+| `blade` | [EmranMR/tree-sitter-blade](https://github.com/EmranMR/tree-sitter-blade.git) | MIT | `<div>{{ $slot }}</div>` |
 | `c` | [tree-sitter/tree-sitter-c](https://github.com/tree-sitter/tree-sitter-c.git) | MIT | `int main(void) { return 0; }` |
 | `c-sharp` | [tree-sitter/tree-sitter-c-sharp](https://github.com/tree-sitter/tree-sitter-c-sharp.git) | MIT | `class Program { static void Main() {} }` |
 | `cmake` | [uyha/tree-sitter-cmake](https://github.com/uyha/tree-sitter-cmake.git) | MIT | `cmake_minimum_required(VERSION 3.10)` |
@@ -84,7 +89,10 @@ This document lists all 38 officially configured grammars in [`tree-sitter-confi
 | `regex` | [tree-sitter/tree-sitter-regex](https://github.com/tree-sitter/tree-sitter-regex.git) | MIT | `abc` |
 | `ruby` | [tree-sitter/tree-sitter-ruby](https://github.com/tree-sitter/tree-sitter-ruby.git) | MIT | `puts 'hello'` |
 | `rust` | [tree-sitter/tree-sitter-rust](https://github.com/tree-sitter/tree-sitter-rust.git) | MIT | `fn main() { let x: i32 = 1; }` |
+| `sass` | [bajrangCoder/tree-sitter-sass](https://github.com/bajrangCoder/tree-sitter-sass.git) | MIT | `$color: red\nbody\n  color: $color` |
 | `scala` | [tree-sitter/tree-sitter-scala](https://github.com/tree-sitter/tree-sitter-scala.git) | MIT | `val x = 1` |
+| `scss` | [tree-sitter-grammars/tree-sitter-scss](https://github.com/tree-sitter-grammars/tree-sitter-scss.git) | MIT | `$color: red;\nbody { color: $color; }` |
+| `solidity` | [JoranHonig/tree-sitter-solidity](https://github.com/JoranHonig/tree-sitter-solidity.git) | MIT | `contract Foo { uint x; }` |
 | `sql` | [DerekStride/tree-sitter-sql](https://github.com/DerekStride/tree-sitter-sql.git) | MIT | `SELECT 1;` |
 | `toml` | [tree-sitter-grammars/tree-sitter-toml](https://github.com/tree-sitter-grammars/tree-sitter-toml.git) | MIT | `x = 1` |
 | `tsx` | [tree-sitter/tree-sitter-typescript](https://github.com/tree-sitter/tree-sitter-typescript.git) | MIT | `const x = <div />;` |

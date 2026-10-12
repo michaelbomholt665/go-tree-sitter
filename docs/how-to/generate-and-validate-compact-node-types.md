@@ -1,6 +1,6 @@
 # How to Generate and Validate Compact Node Types
 
-This guide explains how to generate, audit, and publish token-efficient `compact-node-types.yaml` specifications from `node-types.json` using [`ts-build`](file:///home/michael/projects/go/tree-sitter/cmd/ts-build/main.go).
+This guide explains how to generate, audit, and publish token-efficient `compact-node-types.yaml` specifications from `node-types.json` using [`ts-build`](file:///home/michael/projects/go/tree-sitter/cmd/ts-build/main.go) and convenience Makefile commands.
 
 ---
 
@@ -8,79 +8,90 @@ This guide explains how to generate, audit, and publish token-efficient `compact
 
 Tree-sitter's standard `node-types.json` format is highly verbose and deeply nested. For large grammars (such as TypeScript, C++, or Rust), `node-types.json` can exceed 100 KB and consume tens of thousands of tokens when passed into Large Language Model (LLM) context windows for code generation or AST analysis. This causes severe **context rot** and rapidly exhausts LLM context windows in downstream tools (like the author's **graph builder**).
 
-Like `manifest.json`, `compact-node-types.yaml` was **not built for this app**—it was built for external downstream applications that consume these grammars. [`CompactNodeTypes`](file:///home/michael/projects/go/tree-sitter/internal/tree-sitter/build/compact.go#L65) transforms the massive ~100 KB JSON schema into an AI-friendly ~20 KB YAML file:
-- **75% to 80% token reduction** compared to raw JSON, preventing context rot in LLMs.
-- **100% bidirectional lossless capture**: Every supertype, subtype, named node type, field name, field requirement (`?`), multiplicity (`[...]`), and child union is preserved.
-- **Built at release time**: Generating it during `ts-build move` ensures downstream AI tools receive verified, pre-compacted AST schemas directly from the release catalog.
+Like `manifest.json`, `compact-node-types.yaml` was **not built for this app**—it was built for external downstream applications that consume these grammars. [`CompactNodeTypes`](file:///home/michael/projects/go/tree-sitter/internal/tree-sitter/build/compact.go) transforms the massive ~100 KB JSON schema into an AI-friendly ~20 KB YAML file:
+- **75% to 83% token/size reduction** compared to raw JSON, preventing context rot in LLMs.
+- **100% bidirectional lossless semantic capture**: Every declared identity `(type, named)`, supertype, subtype, named node type, field name, field requirement (`?`), multiplicity (`[...]`), child requirement (`children:` vs `children?:`), operator alternatives, and metadata (`root`, `extra`) is preserved.
+- **Built at release time or on-demand**: Generating it during `ts-build move` or standalone via `ts-build compact` / `make compact` allows updating compact schemas without rebuilding grammar binaries.
 
 ---
 
-## 2. Generating Compact Node Types (`ts-build compact`)
+## 2. Generating Compact Node Types
 
-### Generate for a Single Language
+### Option A: Using the CLI (`ts-build compact`)
 
-Run the `compact` subcommand specifying the language:
-
+#### Generate for a Single Language
 ```bash
 go run ./cmd/ts-build compact --language python
 ```
 
 Output:
 ```text
-[✓] compact   python [122 nodes, 95 fields, 6 supertypes, 83.4% reduction] (2ms)
+[✓] compact   python [123 nodes, 95 fields, 4 supertypes, 81.2% reduction] (1ms)
   -> Wrote: data/tree-sitter/grammar/python/compact-node-types.yaml
-  -> Reduced: 3,746 lines (64,995 bytes) to 351 lines (10,777 bytes) [83.4% reduction]
-  -> VALIDATION PASSED: 100% coverage verified (122 nodes, 95 fields, 6 supertypes, 70 children, 0 errors)
+  -> Reduced: 3,861 lines (67,601 bytes) to 361 lines (12,704 bytes) [81.2% reduction]
+  -> VALIDATION PASSED: 100% coverage verified (123 nodes, 95 fields, 4 supertypes, 71 children, 0 errors)
 ```
 
-The generator produces:
-- `data/tree-sitter/grammar/python/compact-node-types.yaml` (if already published), or
-- `build/python/amd64/compact-node-types.yaml` (if only built).
+The generator writes:
+- `data/tree-sitter/grammar/<lang>/compact-node-types.yaml` (if already published), or
+- `build/<lang>/<arch>/compact-node-types.yaml` (if only built).
 
-### Generate for All Configured Languages
-
-To generate or refresh compact node types across all 38 languages:
-
+#### Generate for All Configured Languages
+To generate or refresh compact node types across all 42 languages:
 ```bash
 go run ./cmd/ts-build compact
 ```
 
-### Direct File Path Invocation
-
+#### Direct File Path Invocation
 You can also pass a direct path to any `node-types.json` file or directory containing one:
-
 ```bash
 go run ./cmd/ts-build compact ./build/rust/amd64/src/node-types.json
 # Or specify a directory:
 go run ./cmd/ts-build compact data/tree-sitter/grammar/python/
 ```
 
+### Option B: Using the Makefile (`make compact`)
+
+```bash
+# Generate compact node types for python
+make compact LANG=python
+
+# Generate compact node types for all languages
+make compact
+```
+
 ---
 
-## 3. Auditing for Lossless Integrity (`--check`)
+## 3. Auditing for Lossless Integrity (`--check` / `make check-compact`)
 
 To audit that an existing `compact-node-types.yaml` file is completely synchronized with its source `node-types.json` without modifying any files, pass `--check`:
 
 ```bash
+# Using ts-build CLI:
 go run ./cmd/ts-build compact --language python --check
+
+# Or using Makefile:
+make check-compact LANG=python
 ```
 
 Output when valid:
 ```text
-[✓] compact   python [122 nodes, 95 fields, 6 supertypes, 83.4% reduction] (1ms)
-  -> VALIDATION PASSED: 100% coverage verified (122 nodes, 95 fields, 6 supertypes, 70 children, 0 errors)
-  -> Reduced: 3,746 lines (64,995 bytes) to 351 lines (10,777 bytes) [83.4% reduction]
+[✓] compact   python [123 nodes, 95 fields, 4 supertypes, 81.2% reduction] (1ms)
+  -> VALIDATION PASSED: 100% coverage verified (123 nodes, 95 fields, 4 supertypes, 71 children, 0 errors)
+  -> Reduced: 3,861 lines (67,601 bytes) to 361 lines (12,704 bytes) [81.2% reduction]
 ```
 
-### CI / Release Audit
+### CI / Release Audit Across All Languages
 
-In CI workflows or pre-release checks, audit all 38 grammars to ensure no schema drift or manual edits corrupted the compact definitions:
+In CI workflows or pre-release checks, audit all 42 grammars to ensure no schema drift or manual edits corrupted the compact definitions:
 
 ```bash
+make check-compact
+# Or:
 go run ./cmd/ts-build compact --check
 ```
 
-If any discrepancies exist (such as missing fields, dropped subtypes, or syntax errors), the command exits with code 1 and prints the detailed discrepancy report.
+If any discrepancies exist (such as missing fields, dropped subtypes, or syntax errors), the command exits with code 1 and prints a detailed discrepancy report.
 
 ---
 
@@ -137,30 +148,39 @@ Here is an excerpt from `data/tree-sitter/grammar/python/compact-node-types.yaml
 ```yaml
 # Compact Tree-sitter Node Types (Generated from node-types.json)
 # Legend:
-#   field_name? : optional field
-#   [Type]      : multiple occurrences allowed
-#   TypeA | B   : alternative node types
+#   tokens: [...]   : inventory of bare anonymous tokens
+#   name            : named node declaration or reference
+#   "token"         : anonymous token declaration or reference
+#   key?            : optional field or children (omitted ? means required)
+#   [T]             : multiple occurrences allowed (omitted brackets means single)
+#   T1 | T2         : alternative types
+#   root: true      : grammar root node
+#   extra: true     : extra node (can appear anywhere, e.g. comments, whitespace)
+
+tokens: ["!=", "%", "%=", "&", "&=", "(", ")", "*", "**", "+", "-", "/", "and", "or", ...]
 
 supertypes:
-  _compound_statement: [class_definition, decorated_definition, for_statement, function_definition, if_statement, match_statement, try_statement, while_statement, with_statement]
-  _simple_statement: [assert_statement, break_statement, continue_statement, delete_statement, exec_statement, expression_statement, future_import_statement, global_statement, import_from_statement, import_statement, nonlocal_statement, pass_statement, print_statement, raise_statement, return_statement, type_alias_statement]
   expression: [as_pattern, boolean_operator, comparison_operator, conditional_expression, lambda, named_expression, not_operator, primary_expression]
 
 nodes:
-  call:
+  boolean_operator:
     fields:
-      arguments: argument_list
-      function: _expression
-  for_statement:
+      left: expression
+      operator: '"and" | "or"'
+      right: expression
+  for_in_clause:
     fields:
-      body: block
-      left: _expression
-      right: _expression
-  binary_operator:
-    fields:
-      left: _expression
-      operator: any
-      right: _expression
+      left: pattern | pattern_list
+      right: '["," | expression]'
+  lambda_parameters:
+    children: [parameter]
+  parameters:
+    children?: [parameter]
+  module:
+    root: true
+    children?: [...]
+  comment:
+    extra: true
 ```
 
 For complete schema semantics, see the [Compact Node Types Schema Reference](file:///home/michael/projects/go/tree-sitter/docs/reference/compact-node-types-schema.md).

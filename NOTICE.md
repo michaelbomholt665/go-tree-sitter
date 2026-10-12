@@ -37,7 +37,7 @@ The following third-party Go modules are used by `ts-build`:
 
 ## Tree-Sitter Grammars
 
-The following 38 grammar definitions are built, validated, and packaged by `ts-build`:
+The following 42 grammar definitions are built, validated, and packaged by `ts-build`:
 
 ### Official Tree-Sitter Grammars (MIT License)
 
@@ -49,16 +49,16 @@ The following 38 grammar definitions are built, validated, and packaged by `ts-b
 | **C++** | https://github.com/tree-sitter/tree-sitter-cpp.git | `v0.23.4` | MIT |
 | **CSS** | https://github.com/tree-sitter/tree-sitter-css.git | `v0.25.0` | MIT |
 | **Go** | https://github.com/tree-sitter/tree-sitter-go.git | `v0.25.0` | MIT |
-| **Haskell** | https://github.com/tree-sitter/tree-sitter-haskell.git | `v0.23.1` | MIT |
+| **Haskell** | https://github.com/tree-sitter/tree-sitter-haskell.git | `v0.24.1` | MIT |
 | **HTML** | https://github.com/tree-sitter/tree-sitter-html.git | `v0.23.2` | MIT |
 | **Java** | https://github.com/tree-sitter/tree-sitter-java.git | `v0.23.5` | MIT |
 | **JavaScript** | https://github.com/tree-sitter/tree-sitter-javascript.git | `v0.25.0` | MIT |
 | **JSON** | https://github.com/tree-sitter/tree-sitter-json.git | `v0.24.8` | MIT |
 | **Julia** | https://github.com/tree-sitter/tree-sitter-julia.git | `v0.25.0` | MIT |
-| **OCaml** | https://github.com/tree-sitter/tree-sitter-ocaml.git | `v0.25.0` | MIT |
-| **OCaml Interface** | https://github.com/tree-sitter/tree-sitter-ocaml.git | `v0.25.0` | MIT |
-| **PHP** | https://github.com/tree-sitter/tree-sitter-php.git | `v0.24.2` | MIT |
-| **PHP Only** | https://github.com/tree-sitter/tree-sitter-php.git | `v0.24.2` | MIT |
+| **OCaml** | https://github.com/tree-sitter/tree-sitter-ocaml.git | `v0.26.0` | MIT |
+| **OCaml Interface** | https://github.com/tree-sitter/tree-sitter-ocaml.git | `v0.26.0` | MIT |
+| **PHP** | https://github.com/tree-sitter/tree-sitter-php.git | `v0.25.1` | MIT |
+| **PHP Only** | https://github.com/tree-sitter/tree-sitter-php.git | `v0.25.1` | MIT |
 | **Python** | https://github.com/tree-sitter/tree-sitter-python.git | `v0.25.0` | MIT |
 | **Regex** | https://github.com/tree-sitter/tree-sitter-regex.git | `v0.25.0` | MIT |
 | **Ruby** | https://github.com/tree-sitter/tree-sitter-ruby.git | `v0.23.1` | MIT |
@@ -71,7 +71,8 @@ The following 38 grammar definitions are built, validated, and packaged by `ts-b
 
 | Language | Repository | Version | License |
 |---|---|---|---|
-| **CMake** | https://github.com/uyha/tree-sitter-cmake.git | `v0.7.4` | MIT |
+| **Blade** | https://github.com/EmranMR/tree-sitter-blade.git | `v0.12.3` | MIT |
+| **CMake** | https://github.com/uyha/tree-sitter-cmake.git | `v0.7.5` | MIT |
 | **Cypher** | https://github.com/simplificare-org/tree-sitter-cypher.git | `v0.0.2` | MIT |
 | **Dockerfile** | https://github.com/camdencheek/tree-sitter-dockerfile.git | `v0.2.0` | MIT |
 | **Elixir** | https://github.com/elixir-lang/tree-sitter-elixir.git | `v0.3.5` | Apache-2.0 |
@@ -81,7 +82,10 @@ The following 38 grammar definitions are built, validated, and packaged by `ts-b
 | **Make** | https://github.com/tree-sitter-grammars/tree-sitter-make.git | `v1.1.1` | MIT |
 | **Markdown** | https://github.com/tree-sitter-grammars/tree-sitter-markdown.git | `v0.5.3` | MIT |
 | **Markdown Inline** | https://github.com/tree-sitter-grammars/tree-sitter-markdown.git | `v0.5.3` | MIT |
-| **Protobuf** | https://github.com/coder3101/tree-sitter-proto.git | `v0.0.0-20260901...` | MIT |
+| **Protobuf** | https://github.com/coder3101/tree-sitter-proto.git | `v0.0.0-20261007...` | MIT |
+| **Sass** | https://github.com/bajrangCoder/tree-sitter-sass.git | `v0.1.0` | MIT |
+| **SCSS** | https://github.com/tree-sitter-grammars/tree-sitter-scss.git | `v1.0.0` | MIT |
+| **Solidity** | https://github.com/JoranHonig/tree-sitter-solidity.git | `v1.2.13` | MIT |
 | **SQL** | https://github.com/DerekStride/tree-sitter-sql.git | `v0.3.11` | MIT |
 | **TOML** | https://github.com/tree-sitter-grammars/tree-sitter-toml.git | `v0.7.0` | MIT |
 | **YAML** | https://github.com/tree-sitter-grammars/tree-sitter-yaml.git | `v0.7.2` | MIT |

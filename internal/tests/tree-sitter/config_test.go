@@ -218,3 +218,24 @@ languages:
 		t.Fatalf("unexpected error message: %v", err)
 	}
 }
+
+func TestResolveLanguagesHyphenUnderscore(t *testing.T) {
+	t.Parallel()
+
+	cfg := &ts.Config{
+		Languages: []ts.Language{
+			{Name: "c-sharp", Grammar: "c_sharp"},
+			{Name: "markdown-inline", Grammar: "markdown_inline"},
+		},
+	}
+
+	for _, query := range []string{"c-sharp", "c_sharp", "markdown-inline", "markdown_inline"} {
+		resolved, err := cfg.ResolveLanguages(query)
+		if err != nil {
+			t.Fatalf("ResolveLanguages(%q) unexpected error: %v", query, err)
+		}
+		if len(resolved) != 1 {
+			t.Fatalf("ResolveLanguages(%q) expected 1 language, got %d", query, len(resolved))
+		}
+	}
+}

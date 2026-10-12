@@ -35,27 +35,58 @@ Like `manifest.json`, `compact-node-types.yaml` was **not built for this app**�
 [`CompactNodeTypes`](file:///home/michael/projects/go/tree-sitter/internal/tree-sitter/build/compact.go#L65) reformulates the AST schema using human- and machine-readable YAML conventions inspired by modern type systems (such as TypeScript and Rust):
 
 ```yaml
+# Compact Tree-sitter Node Types (Generated from node-types.json)
+# Legend:
+#   tokens: [...]   : inventory of bare anonymous tokens
+#   name            : named node declaration or reference
+#   "token"         : anonymous token declaration or reference
+#   key?            : optional field or children (omitted ? means required)
+#   [T]             : multiple occurrences allowed (omitted brackets means single)
+#   T1 | T2         : alternative types
+#   root: true      : grammar root node
+#   extra: true     : extra node (can appear anywhere, e.g. comments, whitespace)
+
+tokens: ["!=", "%", "*", "+", "-", "/", "and", "or", ...]
+
+supertypes:
+  expression: [as_pattern, boolean_operator, comparison_operator, ...]
+
 nodes:
-  function_definition:
+  boolean_operator:
     fields:
-      body: block
-      name: identifier
-      parameters: parameter_list
-      return_type?: type_identifier
+      left: expression
+      operator: '"and" | "or"'
+      right: expression
+  lambda_parameters:
+    children: [parameter]
+  parameters:
+    children?: [parameter]
+  module:
+    root: true
+    children?: [...]
+  comment:
+    extra: true
 ```
 
 ### Design Principles
 
-1. **Idiomatic Optionality (`?`)**:
-   Instead of verbose `"required": false`, the field key is marked with a trailing `?` (e.g. `condition?: _expression`). Required fields omit the question mark.
-2. **Bracketed Multiplicity (`[...]`)**:
-   Instead of `"multiple": true`, repeated child sequences are wrapped in square brackets (e.g. `body: [statement]`).
-3. **Pipe Unions (`TypeA | TypeB`)**:
-   When a field or child allows multiple alternative node types, they are serialized as a pipe-delimited union (e.g. `left: identifier | member_expression`).
-4. **Supertype Segregation**:
-   Abstract supertypes (such as `_expression` or `_statement`) are isolated into a top-level `supertypes:` mapping. Nodes reference the supertype directly, preventing thousands of lines of combinatorial explosion across individual node fields.
-5. **Anonymous Token Elision**:
-   Purely anonymous punctuation tokens (like `(`, `)`, `;`, `,`) that do not possess named identities are elided from field unions or represented as `any` if unconstrained, drastically shrinking the schema footprint without reducing AST clarity.
+1. **Bare Anonymous Token Inventory (`tokens: [...]`)**:
+   Purely anonymous structural and punctuation tokens (such as `+`, `-`, `and`, `or`, `(`, `)`) that carry no additional fields, children, subtypes, or metadata are gathered into a compact, sorted top-level sequence. This avoids declaring hundreds of empty, repetitive node blocks. If an anonymous token carries fields, children, or metadata, it is declared explicitly under `nodes:` as a double-quoted key (e.g., `";":`).
+2. **Unambiguous Named vs. Anonymous Notation**:
+   Named node declarations and references use bare identifiers (or single-quoted identifiers when conflicting with YAML reserved keywords like `'true'`, `'false'`). Anonymous tokens are explicitly double-quoted (e.g. `"and"`, `"+"`). This guarantees that named nodes and anonymous tokens with the same spelling (e.g., named `await` vs. anonymous `"await"`) are never conflated.
+3. **Full Operator Alternatives & Mixed Unions**:
+   Every type alternative in field unions, children descriptors, and supertypes is preserved. Operator fields (such as `augmented_assignment.operator`, `binary_operator.operator`, and `boolean_operator.operator`) retain their explicit anonymous token alternatives (e.g. `'"and" | "or"'`) rather than being approximated or replaced with `any`. Mixed unions (e.g. `for_in_clause.right` with named `expression` alongside anonymous `","`) survive cleanly with bracketed/quoted formatting.
+4. **Independent Requiredness (`?`) and Multiplicity (`[...]`)**:
+   Both fields and children descriptors independently preserve `required` and `multiple` across all four combinations:
+   - `key: T`: Required single instance (`required: true, multiple: false`)
+   - `key?: T`: Optional single instance (`required: false, multiple: false`)
+   - `key: [T]`: Required repeated group (`required: true, multiple: true`)
+   - `key?: [T]`: Optional repeated group (`required: false, multiple: true`)
+   This applies equally to `children:` (required child group) and `children?:` (optional child group).
+5. **Supertype Segregation**:
+   Abstract supertypes (such as `expression` or `statement`) are isolated into a top-level `supertypes:` mapping. Nodes reference the supertype directly, preventing combinatorial explosion across individual node fields.
+6. **Semantic Metadata Preservation (`root` and `extra`)**:
+   `root: true` is preserved on root nodes (such as `module`), and `extra: true` is preserved on nodes that can appear anywhere in the grammar (such as `comment` or `line_continuation`). Any unrecognized source properties trigger an immediate failure rather than being silently discarded.
 
 ---
 
@@ -65,7 +96,7 @@ Token compression is counterproductive if it discards semantic information requi
 
 ### Bidirectional Validation (`ValidateCapture`)
 
-The system does not trust the serializer blindly. After generating compact YAML, [`ValidateCapture`](file:///home/michael/projects/go/tree-sitter/internal/tree-sitter/build/compact.go#L292) parses the YAML back into abstract structures and performs rigorous bidirectional reconciliation against the original `node-types.json`:
+The system does not trust the serializer blindly. After generating compact YAML, [`ValidateCapture`](file:///home/michael/projects/go/tree-sitter/internal/tree-sitter/build/compact.go#L350) parses the YAML back into abstract structures and performs rigorous bidirectional reconciliation against the original `node-types.json`:
 
 ```
 ┌──────────────────┐               ┌───────────────────────────┐
@@ -80,29 +111,32 @@ The system does not trust the serializer blindly. After generating compact YAML,
 ┌──────────────────────────────────────────────────────────────┐
 │                  ValidateCapture() Invariants                │
 │                                                              │
-│  1. ∀ supertype ∈ JSON  ⟺  supertype ∈ YAML (identical sets) │
-│  2. ∀ named node ∈ JSON ⟺  node ∈ YAML                       │
-│  3. ∀ field ∈ JSON      ⟺  field ∈ YAML                      │
-│  4. field.Required      ⟺  !(fieldKey ends with '?')         │
-│  5. field.Multiple      ⟺  typeExpr is enclosed in '[...]'   │
-│  6. Allowed types match ⟺  Union components match exactly    │
-│  7. No extra types      ⟺  YAML contains 0 unknown symbols   │
+│  1. ∀ (type, named) ∈ JSON ⟺  node / token ∈ YAML            │
+│  2. ∀ supertype ∈ JSON     ⟺  supertype ∈ YAML               │
+│  3. ∀ field ∈ JSON         ⟺  field ∈ YAML                   │
+│  4. field.Required         ⟺  !(fieldKey ends with '?')      │
+│  5. field.Multiple         ⟺  typeExpr is enclosed in '[...]'│
+│  6. children.Required      ⟺  children: vs children?:        │
+│  7. children.Multiple      ⟺  typeExpr is enclosed in '[...]'│
+│  8. All type alternatives  ⟺  Union components match exactly │
+│  9. Metadata (root/extra)  ⟺  Flags match source values      │
+│ 10. No unrecognized props  ⟺  0 unhandled properties         │
 └──────────────────────────────────────────────────────────────┘
 ```
 
-If even a single optional flag is flipped or a single subtype is dropped, `ValidateCapture` aborts the build and returns a detailed discrepancy report.
+If even a single optional flag is flipped, a single operator alternative is dropped, or an unrecognized property is encountered, `ValidateCapture` aborts the build and returns a detailed discrepancy report.
 
 ---
 
 ## 4. Empirical Compression Metrics
 
-Across the 38 supported grammars, the compact generator consistently yields dramatic savings:
+Across all 42 supported grammars, the compact generator consistently yields dramatic savings:
 
 | Language | Raw `node-types.json` | `compact-node-types.yaml` | Byte Reduction | Estimated Token Reduction |
 | :--- | :--- | :--- | :--- | :--- |
 | `c` | 54.8 KB | 12.1 KB | **77.9%** | ~78% |
 | `bash` | 62.1 KB | 14.2 KB | **77.1%** | ~77% |
-| `python` | 88.2 KB | 18.5 KB | **79.0%** | **79%** |
+| `python` | 67.6 KB (3,861 lines) | 12.7 KB (361 lines) | **81.2%** | **~81%** |
 | `rust` | 134.5 KB | 31.8 KB | **76.4%** | ~76% |
 | `typescript` | 115.0 KB | 28.2 KB | **75.5%** | ~75% |
 | `cpp` | 112.4 KB | 26.3 KB | **76.6%** | ~77% |
@@ -116,5 +150,6 @@ Because JSON tokenizers must break down repetitive punctuation (`"`, `:`, `,`, `
 
 With `compact-node-types.yaml` published in each grammar's catalog directory (`data/tree-sitter/grammar/<lang>/compact-node-types.yaml`), downstream applications can:
 1. Provide comprehensive grammar rules to LLMs within a compact ~3,000-token budget instead of 25,000+ tokens.
-2. Prompt LLMs to author Tree-sitter queries (`.scm`) with guaranteed node name and field name accuracy.
+2. Prompt LLMs to author Tree-sitter queries (`.scm`) with guaranteed node name, field name, operator, and token accuracy.
 3. Automatically validate generated queries against known node fields before executing them against syntax trees.
+

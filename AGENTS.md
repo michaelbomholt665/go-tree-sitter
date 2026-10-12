@@ -27,7 +27,7 @@ Both `manifest.json` and `compact-node-types.yaml` exist to serve external downs
 
 ```
 .
-├── tree-sitter-config.yaml     <-- Central configuration (38 grammars, toolchains, outputs)
+├── tree-sitter-config.yaml     <-- Central configuration (42 grammars, toolchains, outputs)
 ├── Makefile                    <-- Convenience automation targets
 ├── go.mod / go.sum             <-- Go dependencies and runtime bindings
 ├── cmd/

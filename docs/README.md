@@ -53,7 +53,7 @@ This documentation is structured according to the [Diátaxis framework](https://
 - [Configuration Schema Reference (`tree-sitter-config.yaml`)](file:///home/michael/projects/go/tree-sitter/docs/reference/configuration-schema.md): Complete specification of keys, validation rules, build pruning, and templates in `tree-sitter-config.yaml`.
 - [Compact Node Types Schema Reference](file:///home/michael/projects/go/tree-sitter/docs/reference/compact-node-types-schema.md): Field specifications, typing syntax (`?`, `[...]`, `|`), supertypes, and lossless validation contracts.
 - [Manifest Schema v2 Specification](file:///home/michael/projects/go/tree-sitter/docs/reference/manifest-schema-v2.md): Field contract, artifact flags (`has_compact_node_types`, `has_wasm`, `has_c_source`, etc.), and JSON schema.
-- [Supported Grammar Catalog & Symbol Registry](file:///home/michael/projects/go/tree-sitter/docs/reference/grammar-catalog.md): Complete list of all 38 configured grammars, repos, revisions, constructors, and C symbols.
+- [Supported Grammar Catalog & Symbol Registry](file:///home/michael/projects/go/tree-sitter/docs/reference/grammar-catalog.md): Complete list of all 42 configured grammars, repos, revisions, constructors, and C symbols.
 - [Makefile Target Reference](file:///home/michael/projects/go/tree-sitter/docs/reference/makefile.md): Reference guide for all build, test, and release targets in `Makefile`.
 
 ---

@@ -48,7 +48,7 @@ The wizard walks through the following steps in order:
 | 1 | **Pipeline** | Choose which phases to run: build only, build+compile, full end-to-end, compile only, or publish only. |
 | 2 | **Target Platforms** | Multi-select from Linux amd64, macOS arm64, macOS amd64, Windows amd64, and WebAssembly. |
 | 3 | **Artifacts & Options** | Toggle `manifest.json`, `.scm` query files, `compact-node-types.yaml`, C/C++ sources, `grammar.js`, WebAssembly staging, force-overwrite, and build-cache pruning. |
-| 4 | **Grammars** | Select any subset of the 38 configured languages, or choose **[ ALL ]** to process everything. |
+| 4 | **Grammars** | Select any subset of the 42 configured languages, or choose **[ ALL ]** to process everything. |
 
 Before executing, the wizard displays a compact summary and prompts for final confirmation. Pressing `N` aborts cleanly without touching any files.
 

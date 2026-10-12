@@ -101,7 +101,7 @@ Every major subsystem implements an interface (`CommandRunner`, `PathLookup`, `B
 
 ## 4. Atomic Staging and Zero-Downtime Rollback
 
-In-place file copying is vulnerable to partial failures: if grammar 18 of 38 fails during compilation or validation, an in-place build leaves the catalog in an inconsistent, broken state.
+In-place file copying is vulnerable to partial failures: if grammar 18 of 42 fails during compilation or validation, an in-place build leaves the catalog in an inconsistent, broken state.
 
 `go-tree-sitter` guarantees catalog integrity using filesystem-level directory swaps:
 

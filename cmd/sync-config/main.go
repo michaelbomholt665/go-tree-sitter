@@ -26,6 +26,9 @@ const defaultGomod = "go.mod"
 // covers both "typescript" and "tsx").
 var moduleToLanguage = map[string][]string{
 	"github.com/DerekStride/tree-sitter-sql":               {"sql"},
+	"github.com/EmranMR/tree-sitter-blade":                 {"blade"},
+	"github.com/JoranHonig/tree-sitter-solidity":           {"solidity"},
+	"github.com/bajrangCoder/tree-sitter-sass":             {"sass"},
 	"github.com/camdencheek/tree-sitter-dockerfile":        {"dockerfile"},
 	"github.com/camdencheek/tree-sitter-go-mod":            {"go.mod"},
 	"github.com/coder3101/tree-sitter-proto":               {"proto"},
@@ -35,6 +38,7 @@ var moduleToLanguage = map[string][]string{
 	"github.com/tree-sitter-grammars/tree-sitter-lua":      {"lua"},
 	"github.com/tree-sitter-grammars/tree-sitter-make":     {"make"},
 	"github.com/tree-sitter-grammars/tree-sitter-markdown": {"markdown", "markdown-inline"},
+	"github.com/tree-sitter-grammars/tree-sitter-scss":     {"scss"},
 	"github.com/tree-sitter-grammars/tree-sitter-toml":     {"toml"},
 	"github.com/tree-sitter-grammars/tree-sitter-yaml":     {"yaml"},
 	"github.com/tree-sitter-grammars/tree-sitter-zig":      {"zig"},

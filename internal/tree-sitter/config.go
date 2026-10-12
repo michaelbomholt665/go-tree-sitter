@@ -351,8 +351,11 @@ func (c *Config) ResolveLanguages(name string) ([]Language, error) {
 		return result, nil
 	}
 
+	normalized := strings.ReplaceAll(name, "_", "-")
 	for _, lang := range c.Languages {
-		if lang.Name == name {
+		if lang.Name == name || lang.Grammar == name ||
+			strings.ReplaceAll(lang.Name, "_", "-") == normalized ||
+			strings.ReplaceAll(lang.Grammar, "_", "-") == normalized {
 			return []Language{lang}, nil
 		}
 	}
