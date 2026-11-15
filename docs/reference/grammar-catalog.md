@@ -1,6 +1,6 @@
 # Supported Grammar Catalog & Symbol Registry
 
-This document lists all 65 officially configured grammars in [`tree-sitter-config.yaml`](file:///home/michael/projects/go/tree-sitter/tree-sitter-config.yaml) and their bindings in [`internal/grammars/registry.go`](file:///home/michael/projects/go/tree-sitter/internal/grammars/registry.go).
+This document lists the 65 configured grammar entries in [`tree-sitter-config.yaml`](../../tree-sitter-config.yaml). The tagged, repository-internal [Go registry](../../internal/grammars/registry.go) covers only a subset; it is not an external consumer API.
 
 Make and Zig no longer provide Go bindings in their current upstream revisions. Their published native parsers use the revisions below.
 The optional static Go registry retains Make `v1.1.1` and Zig `v1.1.2` bindings for compatibility.
@@ -84,6 +84,8 @@ See [provider grammar coverage](provider-grammar-coverage.md) for all provider m
 
 ## Repositories, Licenses & Smoke Test Samples
 
+License labels below are descriptive records, not fresh verification of every pinned native source. The Go scan cannot inspect all non-Go dependencies. See [NOTICE](../../NOTICE.md) for scan scope and unresolved classifications.
+
 | Identifier | Upstream Repository | License | Smoke Test Sample |
 | :--- | :--- | :--- | :--- |
 | `bash` | [tree-sitter/tree-sitter-bash](https://github.com/tree-sitter/tree-sitter-bash.git) | MIT | `echo "hello world"` |
@@ -93,7 +95,7 @@ See [provider grammar coverage](provider-grammar-coverage.md) for all provider m
 | `cmake` | [uyha/tree-sitter-cmake](https://github.com/uyha/tree-sitter-cmake.git) | MIT | `cmake_minimum_required(VERSION 3.10)` |
 | `cpp` | [tree-sitter/tree-sitter-cpp](https://github.com/tree-sitter/tree-sitter-cpp.git) | MIT | `#include <vector>\nint main() { std::vector<int> values; }` |
 | `css` | [tree-sitter/tree-sitter-css](https://github.com/tree-sitter/tree-sitter-css.git) | MIT | `a { color: red; }` |
-| `cypher` | [pupli/tree-sitter-cypher](https://github.com/pupli/tree-sitter-cypher.git) | MIT | `MATCH (n) RETURN n;` |
+| `cypher` | [simplificare-org/tree-sitter-cypher](https://github.com/simplificare-org/tree-sitter-cypher.git) | Unverified; optional Go binding scan reports Unknown | `MATCH (n) RETURN n;` |
 | `dockerfile` | [camdencheek/tree-sitter-dockerfile](https://github.com/camdencheek/tree-sitter-dockerfile.git) | Apache-2.0 | `FROM alpine:latest` |
 | `elixir` | [elixir-lang/tree-sitter-elixir](https://github.com/elixir-lang/tree-sitter-elixir.git) | Apache-2.0 | `IO.puts("hello")` |
 | `go` | [tree-sitter/tree-sitter-go](https://github.com/tree-sitter/tree-sitter-go.git) | MIT | `package p` |
@@ -133,7 +135,7 @@ See [provider grammar coverage](provider-grammar-coverage.md) for all provider m
 
 ## Go Binding Aliases in `GetLanguage`
 
-The [`GetLanguage`](file:///home/michael/projects/go/tree-sitter/internal/grammars/registry.go#L28) function in `internal/grammars/registry.go` recognizes convenient alias variations:
+The [`GetLanguage`](../../internal/grammars/registry.go#L28) function in `internal/grammars/registry.go` recognizes convenient alias variations:
 
 - `"bash"` ➔ `bashbinding.Language()`
 - `"c"` ➔ `cbinding.Language()`

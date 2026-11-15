@@ -1,186 +1,80 @@
-# How to Generate and Validate Compact Node Types
+# Generate and validate compact node types
 
-This guide explains how to generate, audit, and publish token-efficient `compact-node-types.yaml` specifications from `node-types.json` using [`ts-build`](file:///home/michael/projects/go/tree-sitter/cmd/ts-build/main.go) and convenience Makefile commands.
+Generate `compact-node-types.yaml` when downstream tools need the AST schema without the repeated structure of `node-types.json`.
 
----
+Compact schemas serve external consumers, including AI agents. They are not required to compile a parser.
 
-## 1. Why Compact Node Types?
-
-Tree-sitter's standard `node-types.json` format is highly verbose and deeply nested. For large grammars (such as TypeScript, C++, or Rust), `node-types.json` can exceed 100 KB and consume tens of thousands of tokens when passed into Large Language Model (LLM) context windows for code generation or AST analysis. This causes severe **context rot** and rapidly exhausts LLM context windows in downstream tools (like the author's **graph builder**).
-
-Like `manifest.json`, `compact-node-types.yaml` was **not built for this app**—it was built for external downstream applications that consume these grammars. [`CompactNodeTypes`](file:///home/michael/projects/go/tree-sitter/internal/tree-sitter/build/compact.go) transforms the massive ~100 KB JSON schema into an AI-friendly ~20 KB YAML file:
-- **75% to 83% token/size reduction** compared to raw JSON, preventing context rot in LLMs.
-- **100% bidirectional lossless semantic capture**: Every declared identity `(type, named)`, supertype, subtype, named node type, field name, field requirement (`?`), multiplicity (`[...]`), child requirement (`children:` vs `children?:`), operator alternatives, and metadata (`root`, `extra`) is preserved.
-- **Built at release time or on-demand**: Generating it during `ts-build move` or standalone via `ts-build compact` / `make compact` allows updating compact schemas without rebuilding grammar binaries.
-
----
-
-## 2. Generating Compact Node Types
-
-### Option A: Using the CLI (`ts-build compact`)
-
-#### Generate for a Single Language
-```bash
-go run ./cmd/ts-build compact --language python
-```
-
-Output:
-```text
-[✓] compact   python [123 nodes, 95 fields, 4 supertypes, 81.2% reduction] (1ms)
-  -> Wrote: data/tree-sitter/grammar/python/compact-node-types.yaml
-  -> Reduced: 3,861 lines (67,601 bytes) to 361 lines (12,704 bytes) [81.2% reduction]
-  -> VALIDATION PASSED: 100% coverage verified (123 nodes, 95 fields, 4 supertypes, 71 children, 0 errors)
-```
-
-The generator writes:
-- `data/tree-sitter/grammar/<lang>/compact-node-types.yaml` (if already published), or
-- `build/<lang>/<arch>/compact-node-types.yaml` (if only built).
-
-#### Generate for All Configured Languages
-To generate or refresh compact node types across all 42 languages:
-```bash
-go run ./cmd/ts-build compact
-```
-
-#### Direct File Path Invocation
-You can also pass a direct path to any `node-types.json` file or directory containing one:
-```bash
-go run ./cmd/ts-build compact ./build/rust/amd64/src/node-types.json
-# Or specify a directory:
-go run ./cmd/ts-build compact data/tree-sitter/grammar/python/
-```
-
-### Option B: Using the Makefile (`make compact`)
+## Generate for one grammar
 
 ```bash
-# Generate compact node types for python
-make compact LANG=python
-
-# Generate compact node types for all languages
-make compact
+ts-build compact --language python
 ```
 
----
+The command resolves the grammar through the selected configuration. Use `--config` if the default selection is not appropriate.
 
-## 3. Auditing for Lossless Integrity (`--check` / `make check-compact`)
-
-To audit that an existing `compact-node-types.yaml` file is completely synchronized with its source `node-types.json` without modifying any files, pass `--check`:
+For a direct file or directory:
 
 ```bash
-# Using ts-build CLI:
-go run ./cmd/ts-build compact --language python --check
-
-# Or using Makefile:
-make check-compact LANG=python
+ts-build compact ./schemas/python/node-types.json
+ts-build compact ./schemas/python
 ```
 
-Output when valid:
-```text
-[✓] compact   python [123 nodes, 95 fields, 4 supertypes, 81.2% reduction] (1ms)
-  -> VALIDATION PASSED: 100% coverage verified (123 nodes, 95 fields, 4 supertypes, 71 children, 0 errors)
-  -> Reduced: 3,861 lines (67,601 bytes) to 361 lines (12,704 bytes) [81.2% reduction]
-```
+The directory must contain `node-types.json`. Generation writes the adjacent compact YAML.
 
-### CI / Release Audit Across All Languages
+Use either a positional path or `--language`, not both.
 
-In CI workflows or pre-release checks, audit all 42 grammars to ensure no schema drift or manual edits corrupted the compact definitions:
+## Check existing output without rewriting
 
 ```bash
-make check-compact
-# Or:
-go run ./cmd/ts-build compact --check
+ts-build compact --language python --check
 ```
 
-If any discrepancies exist (such as missing fields, dropped subtypes, or syntax errors), the command exits with code 1 and prints a detailed discrepancy report.
-
----
-
-## 4. Publishing with `ts-build move`
-
-When publishing grammar releases with `ts-build move`, you can integrate compact node types into the release pipeline using either `--compact` or `--check-compact`.
-
-### Option A: Generate and Stage on Move (`--compact`)
-
-Passing `--compact` causes `ts-build move` to generate `compact-node-types.yaml`, validate it losslessly against `node-types.json`, stage it in the release directory, and update `manifest.json`:
+For a direct schema file:
 
 ```bash
-go run ./cmd/ts-build move --language python --compact --force
+ts-build compact ./schemas/python/node-types.json --check
 ```
 
-### Option B: Audit Existing on Move (`--check-compact`)
+The check compares the existing YAML with the JSON. Missing output or a semantic mismatch returns an error.
 
-If you want to enforce that a pre-generated `compact-node-types.yaml` already exists and is bit-for-bit lossless without auto-regenerating:
+Checks preserve named versus anonymous identities, alternatives, fields, child constraints, subtypes, and supported metadata.
+
+## Audit a complete configured catalog
 
 ```bash
-go run ./cmd/ts-build move --language python --check-compact --force
+ts-build compact --check
 ```
 
----
+Omitting `--language` selects every configured entry. The current repository catalog contains 65 entries; a user's selected configuration can differ.
 
-## 5. Verifying `manifest.json`
+A complete audit requires the corresponding schema files. It is not a command to clone or build missing grammars.
 
-Inspect the generated [`manifest.json`](file:///home/michael/projects/go/tree-sitter/data/tree-sitter/grammar/python/manifest.json):
+## Generate during publication
 
-```json
-{
-  "schema_version": 2,
-  "grammar": "python",
-  "version": "v0.25.0",
-  "artifacts": {
-    "has_node_types": true,
-    "has_compact_node_types": true,
-    "has_queries": true,
-    "has_wasm": false,
-    "has_c_source": false,
-    "has_js": false
-  }
-}
+```bash
+ts-build move --language python --compact --clean=false
 ```
 
-When published with `--compact`, `"has_compact_node_types"` is set to `true`.
+Generation and validation occur in staging before publication.
 
----
+If existing YAML must pass without regeneration:
 
-## 6. Understanding the Generated YAML Format
-
-Here is an excerpt from `data/tree-sitter/grammar/python/compact-node-types.yaml`:
-
-```yaml
-# Compact Tree-sitter Node Types (Generated from node-types.json)
-# Legend:
-#   tokens: [...]   : inventory of bare anonymous tokens
-#   name            : named node declaration or reference
-#   "token"         : anonymous token declaration or reference
-#   key?            : optional field or children (omitted ? means required)
-#   [T]             : multiple occurrences allowed (omitted brackets means single)
-#   T1 | T2         : alternative types
-#   root: true      : grammar root node
-#   extra: true     : extra node (can appear anywhere, e.g. comments, whitespace)
-
-tokens: ["!=", "%", "%=", "&", "&=", "(", ")", "*", "**", "+", "-", "/", "and", "or", ...]
-
-supertypes:
-  expression: [as_pattern, boolean_operator, comparison_operator, conditional_expression, lambda, named_expression, not_operator, primary_expression]
-
-nodes:
-  boolean_operator:
-    fields:
-      left: expression
-      operator: '"and" | "or"'
-      right: expression
-  for_in_clause:
-    fields:
-      left: pattern | pattern_list
-      right: '["," | expression]'
-  lambda_parameters:
-    children: [parameter]
-  parameters:
-    children?: [parameter]
-  module:
-    root: true
-    children?: [...]
-  comment:
-    extra: true
+```bash
+ts-build move --language python --check-compact --clean=false
 ```
 
-For complete schema semantics, see the [Compact Node Types Schema Reference](file:///home/michael/projects/go/tree-sitter/docs/reference/compact-node-types-schema.md).
+Existing selected grammar output requires `--force`. That option replaces its entire directory, not just the compact schema. Catalog replacement also requires supported atomic exchange operations.
+
+## Handle validation failures
+
+If YAML differs from JSON, regenerate from the intended JSON source and repeat the check.
+
+If JSON contains unsupported properties, preserve the original file and report the schema difference. Do not remove properties to make validation pass.
+
+Do not hand-edit generated compact YAML and assume it remains equivalent.
+
+## Measure size separately
+
+The command reports byte-size reduction. Token savings depend on the tokenizer and grammar. A smaller file does not guarantee better model behavior.
+
+See the [schema reference](../reference/compact-node-types-schema.md) for notation and [design explanation](../explanation/compact-node-types-and-token-efficiency.md) for preservation rules.

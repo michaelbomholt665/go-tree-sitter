@@ -1,100 +1,78 @@
-# How to Add a New Grammar Language
+# Add a new grammar
 
-This guide explains how to add a new language grammar to the build pipeline and register its bindings.
+Add a source grammar to the selected catalog. A Go binding is optional and separate from artifact compilation.
 
----
+## 1. Inspect the upstream repository
 
-## Overview of Steps
+Identify the grammar root, constructor, sample syntax, queries, and license. If the repository contains multiple grammars, identify the required subdirectory.
 
-1. Add the grammar definition to [tree-sitter-config.yaml](file:///home/michael/projects/go/tree-sitter/tree-sitter-config.yaml).
-2. (Optional) Add upstream Go bindings to [go.mod](file:///home/michael/projects/go/tree-sitter/go.mod).
-3. Register the binding in [`internal/grammars/registry.go`](file:///home/michael/projects/go/tree-sitter/internal/grammars/registry.go).
-4. Map the Go module path in [`cmd/sync-config/main.go`](file:///home/michael/projects/go/tree-sitter/cmd/sync-config/main.go).
-5. Build, compile, and validate the new grammar.
+Resolve the desired upstream revision to a full, 40-character hexadecimal commit SHA. Do not use a branch, tag, or abbreviated hash as `revision`.
 
----
+Inspect the source license at that revision before distributing artifacts. See [NOTICE](../../NOTICE.md) for current scan limits.
 
-## Step 1: Add the Grammar to `tree-sitter-config.yaml`
-
-Open [tree-sitter-config.yaml](file:///home/michael/projects/go/tree-sitter/tree-sitter-config.yaml) and add a new entry under `languages:`:
-
-```yaml
-  - name: "ruby"
-    grammar: "ruby"
-    constructor: "tree_sitter_ruby"
-    version: "v0.23.1"
-    repository: "https://github.com/tree-sitter/tree-sitter-ruby.git"
-    revision: "b213c490a6fa552d8e40f5ddc3cb7a8b417ff808"
-    sample: "def hello; puts 'world'; end\n"
-```
-
-### Configuration Fields Checklist
-- **`name`**: File path identifier (must match `^[A-Za-z0-9._-]+$`).
-- **`grammar`**: Symbol suffix for the C function.
-- **`constructor`**: Must strictly equal `tree_sitter_<grammar>`.
-- **`version`**: Tag or Go module version.
-- **`repository`**: Absolute HTTPS git repository URL.
-- **`revision`**: Full 40-character hexadecimal commit SHA.
-- **`source_subdir`**: Subdirectory if the repository contains multiple grammars (e.g. `typescript` / `tsx`).
-- **`sample`**: Minimal valid code snippet used by `ts-build` to smoke-test parser output during validation.
-
----
-
-## Step 2: Add Upstream Go Bindings (Optional)
-
-If the grammar provides CGo bindings for direct Go import, add it to [go.mod](file:///home/michael/projects/go/tree-sitter/go.mod):
+## 2. Edit the selected configuration
 
 ```bash
-go get github.com/tree-sitter/tree-sitter-ruby@v0.23.1
+ts-build config path
 ```
 
----
+Open the returned file in a text editor. Add an entry under `languages` using an existing grammar with a similar layout as the model.
 
-## Step 3: Register in `internal/grammars/registry.go`
+Set these fields:
 
-Open [`internal/grammars/registry.go`](file:///home/michael/projects/go/tree-sitter/internal/grammars/registry.go):
+| Field | Meaning |
+| --- | --- |
+| `name` | Unique catalog identifier |
+| `grammar` | Grammar name used by the build |
+| `constructor` | Exported C constructor |
+| `version` | Upstream package label |
+| `repository` | Upstream Git URL |
+| `revision` | Full source commit SHA |
+| `sample` | Small valid program for host validation |
 
-1. Import the Go binding package:
-   ```go
-   rubybinding "github.com/tree-sitter/tree-sitter-ruby/bindings/go"
-   ```
-2. Add a case statement in [`GetLanguage`](file:///home/michael/projects/go/tree-sitter/internal/grammars/registry.go#L28):
-   ```go
-   case "ruby":
-       ptr = unsafe.Pointer(rubybinding.Language())
-   ```
+Configure subdirectory and generation overrides only when the upstream layout requires them. See the [configuration schema](../reference/configuration-schema.md).
 
----
+`config set` and `config edit` manage non-language settings; they are not grammar-entry editors.
 
-## Step 4: Map in `cmd/sync-config/main.go`
+## 3. Record support evidence separately
 
-To ensure automatic version synchronization works for the new grammar, add its Go module path to [`moduleToLanguage`](file:///home/michael/projects/go/tree-sitter/cmd/sync-config/main.go#L27):
+Do not infer a source-language version from a package version or parser ABI.
 
-```go
-var moduleToLanguage = map[string][]string{
-    // ... existing mappings ...
-    "github.com/tree-sitter/tree-sitter-ruby": {"ruby"},
-}
-```
+Read [VERIFY_VERSIONS.md](../reference/VERIFY_VERSIONS.md). Record documentation evidence for the pinned revision. Leave unsupported claims unknown or unverified.
 
----
+Version-specific fixtures require an explicit request. Adding a grammar or parsing its smoke sample does not authorize or establish a version-support claim.
 
-## Step 5: Verify the New Grammar
+## 4. Validate and build only the new grammar
 
-Execute the 3-phase pipeline for your new grammar:
+Replace `mylang` below with the new identifier:
 
 ```bash
-# 1. Clone repository and generate source files
-go run ./cmd/ts-build build --language ruby
-
-# 2. Compile native shared library
-go run ./cmd/ts-build compile --language ruby
-
-# 3. Validate binary, test sample AST, and publish catalog
-go run ./cmd/ts-build move --language ruby --force
+ts-build config validate
+ts-build list --language mylang
+ts-build build --language mylang
+ts-build compile --language mylang
+ts-build move --language mylang --compact --clean=false
+ts-build compact --language mylang --check
 ```
 
-Run test suite to verify tests pass:
+Use a separate output root for experimental releases. On Windows, choose a new catalog destination because replacement is unsupported.
+
+## 5. Add a Go binding only if required
+
+The CLI can build grammar repositories without registering Go bindings.
+
+If repository-internal tests require an upstream Go binding, add its module dependency and update the tagged registry in `internal/grammars/`. That registry is not importable by external consumer modules.
+
+If module synchronization must update this grammar's package label, add the module mapping under `runtime.sync_modules` in configuration.
+
+These optional bindings are a subset of the source grammar catalog. Do not describe the full catalog as an equivalent Go binding registry.
+
+## 6. Update release records
+
+Update the grammar catalog reference, changelog, and dependency notices. Run the standard test suite from a source checkout:
+
 ```bash
-make test
+go test ./...
 ```
+
+See [Build and release](build-and-release-grammars.md) for replacement and validation rules.

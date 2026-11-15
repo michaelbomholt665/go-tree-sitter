@@ -1,248 +1,117 @@
-# Getting Started with go-tree-sitter
+# Tutorial: publish your first Python parser
 
-This tutorial guides you through setting up your environment, building your first Tree-sitter grammar, compiling it into a shared library, and parsing code with Go.
+This tutorial builds only Python on Linux amd64. It uses a new workspace and an explicit configuration so existing releases remain separate.
 
-By the end of this lesson, you will have:
-1. Built the `c` grammar from its upstream repository.
-2. Compiled it into a native shared library for your host operating system.
-3. Published the grammar and validated its metadata with `manifest.json`.
-4. Run a Go program that parses a C snippet into a syntax tree using [`go-tree-sitter`](file:///home/michael/projects/go/tree-sitter/go.mod#L11).
-
----
+For Windows, use the script-based [VM test guide](../../TEST-GUIDE.md). For other targets, read [Cross-compile parsers](../how-to/cross-compile-grammars.md).
 
 ## Prerequisites
 
-Before starting, ensure the following tools are available on your system:
+Install `ts-build` on `PATH`, Git, Node.js/npm, GCC/G++, and the Tree-sitter CLI version required by your configuration.
 
-1. **Go 1.26 or higher**:
-   ```bash
-   go version
-   ```
-2. **Tree-sitter CLI 0.26.8**:
-   Install via npm if not already installed:
-   ```bash
-   npm install -g tree-sitter-cli@0.26.8
-   ```
-   Verify the installation:
-   ```bash
-   tree-sitter --version
-   # Expected: tree-sitter 0.26.8
-   ```
-3. **C Compiler (GCC or Clang)**:
-   Ensure `gcc` or `clang` is installed and on your `$PATH`:
-   ```bash
-   gcc --version
-   ```
-4. **Git**:
-   ```bash
-   git --version
-   ```
-
----
-
-## Step 1: Clone the Repository and Check Configuration
-
-Navigate to the `go-tree-sitter` repository root:
+Check the tools:
 
 ```bash
-cd /home/michael/projects/go/tree-sitter
+ts-build version
+git --version
+node --version
+npm --version
+gcc --version
+g++ --version
+tree-sitter --version
 ```
 
-Open [tree-sitter-config.yaml](file:///home/michael/projects/go/tree-sitter/tree-sitter-config.yaml). The configuration file contains pinned repositories, revisions, compiler targets, and output rules.
+The configured Tree-sitter CLI version is a reproducibility pin, not a minimum version.
 
-Notice the definition for the C language grammar:
+## 1. Create an isolated configuration
 
-```yaml
-languages:
-  - name: "c"
-    grammar: "c"
-    constructor: "tree_sitter_c"
-    version: "v0.24.2"
-    repository: "https://github.com/tree-sitter/tree-sitter-c.git"
-    revision: "b780e47fc780ddc8da13afa35a3f4ed5c157823d"
-    sample: "int main(void) { return 0; }\n"
-```
-
-The configuration pins an exact 40-character commit hash (`revision`) to guarantee reproducible builds.
-
----
-
-## Step 2: Build the Grammar Source
-
-Run the `build` subcommand to clone the upstream grammar repository and generate the C parser source files:
+Create a new directory:
 
 ```bash
-go run ./cmd/ts-build build --language c
+mkdir ts-build-tutorial
+cd ts-build-tutorial
 ```
 
-You should see concise output confirming the build step completed:
-
-```text
-[✓] build     c                              (1.2s)
-```
-
-### What Happened Behind the Scenes?
-1. The builder cloned `tree-sitter-c` at pinned commit `b780e47...` into `build/c/`.
-2. Extracted the commit timestamp for deterministic builds (`SOURCE_DATE_EPOCH`).
-3. Ran `tree-sitter generate --abi 15`.
-4. Stored generation metadata and `node-types.json` checksum in `build/c/.source-provenance.json`.
-
----
-
-## Step 3: Compile the Native Shared Library
-
-Now, compile the generated C source code into a native dynamic shared library for your host platform:
+Resolve and copy the selected default configuration:
 
 ```bash
-go run ./cmd/ts-build compile --language c
+ts-build config path
+cp "$(ts-build config path)" ./tutorial.yaml
 ```
 
-Output:
-
-```text
-[✓] compile   c [linux/amd64]                (0.6s)
-```
-
-Inspect the intermediate build directory:
+Inspect Python before executing the pipeline:
 
 ```bash
-ls -l build/c/amd64/
+ts-build --config ./tutorial.yaml list --language python
+ts-build --config ./tutorial.yaml config get tree_sitter_cli_version
 ```
 
-You will find the compiled shared library:
-- Linux: `c-v0.24.2-linux-amd64.so`
-- macOS: `c-v0.24.2-macos-amd64.dylib` (or `macos-arm64`)
-- Windows: `c-v0.24.2-windows-amd64.dll`
+If the CLI versions differ, install the configured Tree-sitter CLI version before continuing.
 
-Alongside the library, `ts-build` generated a binary provenance record:
-- `c-v0.24.2-linux-amd64.so.provenance.json`
-
----
-
-## Step 4: Validate and Publish Artifacts
-
-Move the compiled artifacts into the canonical catalog under `data/tree-sitter/grammar/c/`:
+Give this tutorial separate intermediate and output directories:
 
 ```bash
-go run ./cmd/ts-build move --language c --force
+ts-build --config ./tutorial.yaml config set build_dir ./tutorial-build --apply
+ts-build --config ./tutorial.yaml config set output.grammar_base ./tutorial-output --apply
+ts-build --config ./tutorial.yaml config set OS_TARGET linux --apply
+ts-build --config ./tutorial.yaml config set targets "{\"linux\":{\"os\":\"linux\",\"arch\":\"amd64\",\"triple\":\"x86_64-linux-gnu\",\"compiler\":\"gcc\",\"cxx\":\"g++\",\"compiler_version\":\"$(gcc -dumpfullversion -dumpversion)\"}}" --apply
+ts-build --config ./tutorial.yaml config set runtime.compiler.allow_fallback false --apply
+ts-build --config ./tutorial.yaml config validate
 ```
 
-Output:
+Each `config set` previews changes unless `--apply` is present. Paths above resolve relative to `tutorial.yaml`.
 
-```text
-[✓] move      data/tree-sitter/grammar       [1 grammars, 1 binaries] (0.1s)
-```
+`targets` is one map setting. The command replaces it with a Linux-only map in the tutorial copy.
 
-Check the published output directory:
+## 2. Generate Python sources
 
 ```bash
-ls -l data/tree-sitter/grammar/c/
+ts-build --config ./tutorial.yaml build --language python
 ```
 
-The published catalog now contains:
-- The compiled native library (`c-v0.24.2-<os>-<arch>.so`)
-- AST type definitions (`node-types.json`)
-- Tree-sitter query files (`queries/highlights.scm`, `queries/tags.scm`)
-- Validated catalog metadata (`manifest.json`)
+The builder checks out the configured full revision, installs grammar dependencies according to runtime policy, and generates parser sources. Source provenance records the revision, generator, timestamp, and input hashes.
 
-Inspect `data/tree-sitter/grammar/c/manifest.json`:
+If checkout fails, inspect the error. The builder preserves an existing workspace unless you explicitly request `build --force`.
 
-```json
-{
-  "schema_version": 2,
-  "grammar": "c",
-  "version": "v0.24.2",
-  "compiled_at": "2024-11-20T00:54:15Z",
-  "tree_sitter_version": "0.26.8",
-  "parser_abi": 15,
-  "binaries": [
-    {
-      "platform": "linux",
-      "arch": "amd64",
-      "filename": "c-v0.24.2-linux-amd64.so",
-      "checksum_sha256": "..."
-    }
-  ],
-  "abi": {
-    "min_version": 15,
-    "max_version": 15,
-    "parser_version": "0.26.8"
-  },
-  "artifacts": {
-    "has_node_types": true,
-    "has_queries": true,
-    "has_wasm": false
-  }
-}
-```
-
-Notice that `parser_abi` was measured directly from the compiled binary by loading it and checking its runtime symbol.
-
----
-
-## Step 5: Parse Code in Go
-
-Now verify your grammar by writing a small Go program that parses a C function.
-
-Create a temporary file `main.go`:
-
-```go
-package main
-
-import (
-	"fmt"
-
-	"github.com/michaelbomholt665/go-tree-sitter/internal/grammars"
-	sitter "github.com/tree-sitter/go-tree-sitter"
-)
-
-func main() {
-	// 1. Get the C language binding
-	cLang := grammars.GetLanguage("c")
-	if cLang == nil {
-		panic("c language not available")
-	}
-
-	// 2. Initialize a new parser
-	parser := sitter.NewParser()
-	defer parser.Close()
-
-	if err := parser.SetLanguage(cLang); err != nil {
-		panic(err)
-	}
-
-	// 3. Parse a C code snippet
-	code := []byte("int add(int a, int b) { return a + b; }")
-	tree := parser.Parse(code, nil)
-	defer tree.Close()
-
-	root := tree.RootNode()
-	fmt.Printf("Root node type: %s\n", root.Kind())
-	fmt.Printf("Syntax tree sexp: %s\n", root.ToSexp())
-}
-```
-
-Run the program with the `grammars` build tag enabled:
+## 3. Compile the host library
 
 ```bash
-go run -tags grammars main.go
+ts-build --config ./tutorial.yaml compile --language python --os linux --arch amd64
 ```
 
-Output:
+Compilation checks source provenance and produces a fresh artifact with a checksum sidecar. A failed compilation does not turn a stale binary into a successful result.
 
-```text
-Root node type: translation_unit
-Syntax tree sexp: (translation_unit (function_definition type: (primitive_type) declarator: (function_declarator declarator: (identifier) parameters: (parameter_list (parameter_declaration type: (primitive_type) declarator: (identifier)) (parameter_declaration type: (primitive_type) declarator: (identifier)))) body: (compound_statement (return_statement (binary_expression left: (identifier) right: (identifier))))))
+## 4. Validate and publish
+
+```bash
+ts-build --config ./tutorial.yaml move --language python --compact --clean=false
 ```
 
----
+The mover loads the host binary, measures its ABI, parses the sample, and validates available queries. It stages a manifest and compact AST schema before publication.
 
-## Next Steps
+The output is under `tutorial-output/python/`. The intermediate checkout remains because `--clean=false` is explicit.
 
-Congratulations! You have successfully built, compiled, validated, published, and parsed code with a Tree-sitter grammar.
+```bash
+ls ./tutorial-output/python
+cat ./tutorial-output/python/manifest.json
+ts-build --config ./tutorial.yaml compact --language python --check
+```
 
-To explore further:
-- Try `go run ./cmd/ts-build wizard` for an interactive guided experience — the recommended way to run the pipeline day-to-day without memorising flags.
-- Learn how to run full releases for all 42 languages in [How to Build and Release Grammars](file:///home/michael/projects/go/tree-sitter/docs/how-to/build-and-release-grammars.md).
-- Learn how to compile Windows and macOS binaries in [How to Cross-Compile for Windows and macOS](file:///home/michael/projects/go/tree-sitter/docs/how-to/cross-compile-grammars.md).
-- Understand how validation prevents corrupted releases in [Dual-Mode Validation Mechanics](file:///home/michael/projects/go/tree-sitter/docs/explanation/dual-mode-validation.md).
+A successful compact check confirms that the YAML preserves the JSON schema semantics.
+
+## 5. Understand repeat runs
+
+A second publication of Python requires explicit replacement:
+
+```bash
+ts-build --config ./tutorial.yaml move --language python --compact --clean=false --force
+```
+
+If the filesystem does not support atomic exchange, replacement fails and the existing catalog remains intact.
+
+WARNING: `clean` removes intermediate build files. Do not run it until you finish inspecting the checkout.
+
+```bash
+ts-build --config ./tutorial.yaml clean --language python
+```
+
+The published catalog is separate from the intermediate workspace. Continue with [Build and release grammars](../how-to/build-and-release-grammars.md).

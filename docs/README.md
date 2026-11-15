@@ -1,69 +1,57 @@
-# go-tree-sitter Documentation
+# Documentation
 
-Welcome to the documentation for **go-tree-sitter**, a reproducible Tree-sitter grammar builder, compiler, and release toolchain for Go.
+The documentation separates learning, task instructions, reference information, and explanations.
 
-This documentation is structured according to the [Diátaxis framework](https://diataxis.fr/), separating content into four distinct modes of documentation based on user needs:
+The current catalog contains 65 grammar entries. Use `ts-build list` to inspect the selected configuration rather than relying on a fixed documentation count.
 
-```
-                  PRACTICAL STEPS
-                        ▲
-                        │
-       Tutorials        │       How-To Guides
-   (Learning-oriented)  │     (Problem-oriented)
-                        │
-◄───────────────────────┼───────────────────────►
-  MOST USEFUL TO BEGINNERS       MOST USEFUL TO EXPERTS
-                        │
-      Explanation       │         Reference
- (Understanding-oriented)│   (Information-oriented)
-                        │
-                        ▼
-                 THEORETICAL KNOWLEDGE
-```
+## Tutorials
 
----
+Start here for a guided first result:
 
-## 🟢 Tutorials (Learning-Oriented)
+- [Getting started](tutorials/getting-started.md): build and publish only Python in an isolated Linux workspace.
+- [Windows VM test](../TEST-GUIDE.md): install tools and test only Python through the PowerShell setup script.
 
-*Step-by-step lessons designed to take newcomers through a complete, hands-on experience.*
+## How-to guides
 
-- [Getting Started with go-tree-sitter](file:///home/michael/projects/go/tree-sitter/docs/tutorials/getting-started.md): Set up required tools, build a grammar, compile a native library, and parse your first code snippet in Go.
+Use these guides for specific tasks:
 
----
+- [Configure runtime policy and inspect the catalog](how-to/configure-runtime-and-catalog.md)
+- [Build and release grammars](how-to/build-and-release-grammars.md)
+- [Add a grammar](how-to/add-a-new-grammar.md)
+- [Cross-compile parsers](how-to/cross-compile-grammars.md)
+- [Compile WebAssembly parsers](how-to/compile-webassembly-parsers.md)
+- [Generate and validate compact node types](how-to/generate-and-validate-compact-node-types.md)
+- [Synchronize module versions](how-to/sync-versions-with-go-mod.md)
+- [Use grammars from Go](how-to/use-compiled-grammars-in-go.md)
 
-## 🟡 How-To Guides (Problem-Oriented)
+## Reference
 
-*Practical recipes and step-by-step procedures to solve specific tasks.*
+Look up exact command, configuration, and schema details:
 
-- [How to Build and Release Grammars](file:///home/michael/projects/go/tree-sitter/docs/how-to/build-and-release-grammars.md): Build individual or all grammars, select asset preservation modes, prune build caches, and publish release catalogs.
-- [How to Cross-Compile for Windows and macOS](file:///home/michael/projects/go/tree-sitter/docs/how-to/cross-compile-grammars.md): Set up toolchains (MinGW, Apple Clang, Zig fallback) to compile and validate foreign binaries from Linux.
-- [How to Compile WebAssembly (WASM) Parsers](file:///home/michael/projects/go/tree-sitter/docs/how-to/compile-webassembly-parsers.md): Compile WebAssembly parser artifacts using native Emscripten (`emcc`) or automated Docker/Podman wrappers.
-- [How to Generate and Validate Compact Node Types](file:///home/michael/projects/go/tree-sitter/docs/how-to/generate-and-validate-compact-node-types.md): Generate token-efficient YAML schemas from `node-types.json`, audit for lossless integrity, and publish with releases.
-- [How to Add a New Grammar Language](file:///home/michael/projects/go/tree-sitter/docs/how-to/add-a-new-grammar.md): Configure, wire, and validate a new grammar repository in the build system.
-- [How to Synchronize Versions with go.mod](file:///home/michael/projects/go/tree-sitter/docs/how-to/sync-versions-with-go-mod.md): Keep grammar versions in sync with Go module dependencies using `sync-config`.
-- [How to Consume and Parse in Go Applications](file:///home/michael/projects/go/tree-sitter/docs/how-to/use-compiled-grammars-in-go.md): Load static and dynamic grammars, parse source files, run Tree-sitter query expressions, and consume AST schemas.
+- [CLI](reference/cli.md)
+- [Configuration schema](reference/configuration-schema.md)
+- [Grammar catalog](reference/grammar-catalog.md)
+- [Manifest schema v2](reference/manifest-schema-v2.md)
+- [Compact node types schema](reference/compact-node-types-schema.md)
+- [Provider coverage metadata](reference/provider-grammar-coverage.md)
+- [Provider language-version research](reference/provider-language-version-research.md)
+- [Language support verification workflow](reference/VERIFY_VERSIONS.md)
+- [Makefile development targets](reference/makefile.md)
 
----
+## Explanation
 
-## 🔵 Reference (Information-Oriented)
+Read these pages to understand the design and its limits:
 
-*Authoritative technical descriptions, command flags, configuration schemas, and data specifications.*
+- [Architecture and pipeline](explanation/architecture-and-pipeline.md)
+- [Dual-mode validation](explanation/dual-mode-validation.md)
+- [ABI evolution and runtime compatibility](explanation/abi-evolution-and-runtime-compatibility.md)
+- [Provenance and reproducibility](explanation/reproducible-builds-and-provenance.md)
+- [Compact node types design](explanation/compact-node-types-and-token-efficiency.md)
 
-- [CLI Command Reference (`ts-build`)](file:///home/michael/projects/go/tree-sitter/docs/reference/cli.md): Command flags, subcommands (`wizard`, `build`, `compile`, `move`, `clean`, `compact`), and environment variables.
-- [Configuration Schema Reference (`tree-sitter-config.yaml`)](file:///home/michael/projects/go/tree-sitter/docs/reference/configuration-schema.md): Complete specification of keys, validation rules, build pruning, and templates in `tree-sitter-config.yaml`.
-- [Compact Node Types Schema Reference](file:///home/michael/projects/go/tree-sitter/docs/reference/compact-node-types-schema.md): Field specifications, typing syntax (`?`, `[...]`, `|`), supertypes, and lossless validation contracts.
-- [Manifest Schema v2 Specification](file:///home/michael/projects/go/tree-sitter/docs/reference/manifest-schema-v2.md): Field contract, artifact flags (`has_compact_node_types`, `has_wasm`, `has_c_source`, etc.), and JSON schema.
-- [Supported Grammar Catalog & Symbol Registry](file:///home/michael/projects/go/tree-sitter/docs/reference/grammar-catalog.md): Complete list of all 42 configured grammars, repos, revisions, constructors, and C symbols.
-- [Makefile Target Reference](file:///home/michael/projects/go/tree-sitter/docs/reference/makefile.md): Reference guide for all build, test, and release targets in `Makefile`.
+## Configuration and release context
 
----
+The normal default is a per-user configuration. A current-directory `.env` containing `TS_BUILD_ENV=DEVELOPMENT` selects the repository configuration instead. An explicit `--config` overrides both.
 
-## 🟣 Explanation (Understanding-Oriented)
+Catalog replacement requires supported atomic exchange operations. Windows replacement is not implemented. Foreign static validation does not supply the measured ABI required by a normal manifest.
 
-*Discussions, architectural rationales, and deep dives into core design decisions.*
-
-- [Architecture and Pipeline Design](file:///home/michael/projects/go/tree-sitter/docs/explanation/architecture-and-pipeline.md): The 3-phase pipeline (`build`, `compile`, `move`), atomic directory swaps, rollback mechanisms, and internal subsystem wiring.
-- [Reproducible Builds, Provenance, and Determinism](file:///home/michael/projects/go/tree-sitter/docs/explanation/reproducible-builds-and-provenance.md): Commit pinning, `SOURCE_DATE_EPOCH`, provenance chains, and why manifest-only generation is prohibited.
-- [Compact Node Types and Token Efficiency](file:///home/michael/projects/go/tree-sitter/docs/explanation/compact-node-types-and-token-efficiency.md): Solving the LLM context window problem, 60%–80% compression theory, and bidirectional lossless reconciliation.
-- [Dual-Mode Validation Mechanics](file:///home/michael/projects/go/tree-sitter/docs/explanation/dual-mode-validation.md): Dynamic runtime loading (`dlopen`) vs. static header inspection (ELF, Mach-O, PE).
-- [Tree-sitter ABI & Runtime Compatibility](file:///home/michael/projects/go/tree-sitter/docs/explanation/abi-evolution-and-runtime-compatibility.md): Understanding ABI versions, generator flags, and Go runtime compatibility boundaries.
+See the root [README](../README.md), [CHANGELOG](../CHANGELOG.md), and [NOTICE](../NOTICE.md) for release and license information.

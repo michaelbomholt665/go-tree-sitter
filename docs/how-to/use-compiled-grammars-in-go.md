@@ -1,234 +1,99 @@
-# How to Consume and Parse in Go Applications
+# Use Tree-sitter grammars from Go
 
-This guide explains how to use compiled Tree-sitter grammars in Go applications to parse source code, inspect AST nodes, and execute tree-sitter queries.
+Choose between an upstream Go binding and a published native C library. They are different integration paths.
 
----
+## Use an upstream Go binding
 
-## 1. Using Built-in Grammars via `internal/grammars`
+A binding compiles grammar sources into the consumer through CGo. It does not load the library published by `ts-build move`.
 
-The [`internal/grammars`](file:///home/michael/projects/go/tree-sitter/internal/grammars) package provides a centralized registry mapping grammar names to [`*sitter.Language`](file:///home/michael/projects/go/tree-sitter/internal/grammars/registry.go#L28) pointers:
+Create a consumer module with a working C/C++ toolchain:
+
+```bash
+mkdir python-parser-example
+cd python-parser-example
+go mod init example.com/python-parser-example
+go get github.com/tree-sitter/go-tree-sitter@v0.25.0
+go get github.com/tree-sitter/tree-sitter-python@v0.25.1-0.20250915213335-26855eabccb1
+```
+
+Save this example:
 
 ```go
+// main.go
 package main
 
 import (
-	"fmt"
+    "fmt"
 
-	"github.com/michaelbomholt665/go-tree-sitter/internal/grammars"
-	sitter "github.com/tree-sitter/go-tree-sitter"
+    sitter "github.com/tree-sitter/go-tree-sitter"
+    python "github.com/tree-sitter/tree-sitter-python/bindings/go"
 )
 
 func main() {
-	// Retrieve language pointer (e.g. "go", "python", "json", "rust", etc.)
-	lang := grammars.GetLanguage("python")
-	if lang == nil {
-		panic("language not supported")
-	}
+    parser := sitter.NewParser()
+    defer parser.Close()
 
-	// Create and configure a parser instance
-	parser := sitter.NewParser()
-	defer parser.Close()
+    language := sitter.NewLanguage(python.Language())
+    if err := parser.SetLanguage(language); err != nil {
+        panic(err)
+    }
 
-	if err := parser.SetLanguage(lang); err != nil {
-		panic(err)
-	}
+    tree := parser.Parse([]byte("print('hello')\n"), nil)
+    if tree == nil {
+        panic("parse failed")
+    }
+    defer tree.Close()
 
-	// Parse source code
-	source := []byte("def greet(name):\n    return f'Hello, {name}'\n")
-	tree := parser.Parse(source, nil)
-	defer tree.Close()
-
-	root := tree.RootNode()
-	fmt.Printf("Parsed %d bytes into AST: %s\n", len(source), root.Kind())
+    root := tree.RootNode()
+    if root.HasError() {
+        panic("sample contains a parse error")
+    }
+    fmt.Println(root.ToSexp())
 }
 ```
 
-> [!NOTE]
-> When compiling code that imports [`internal/grammars`](file:///home/michael/projects/go/tree-sitter/internal/grammars), pass the build tag `-tags grammars`:
-> ```bash
-> go run -tags grammars main.go
-> ```
+Run it:
 
----
-
-## 2. Loading Published Dynamic Shared Libraries at Runtime
-
-To load published `.so`, `.dylib`, or `.dll` binaries dynamically at runtime without linking them at compile time:
-
-```go
-package main
-
-import (
-	"fmt"
-	"path/filepath"
-	"plugin" // Or dlopen on Unix
-	"unsafe"
-
-	sitter "github.com/tree-sitter/go-tree-sitter"
-)
-
-func LoadLanguageFromSO(soPath, constructorSymbol string) (*sitter.Language, error) {
-	// Open dynamic shared library
-	plug, err := plugin.Open(soPath)
-	if err != nil {
-		return nil, fmt.Errorf("open dynamic library: %w", err)
-	}
-
-	// Lookup grammar constructor symbol (e.g. "tree_sitter_python")
-	sym, err := plug.Lookup(constructorSymbol)
-	if err != nil {
-		return nil, fmt.Errorf("lookup constructor %s: %w", constructorSymbol, err)
-	}
-
-	// Cast symbol to language constructor func() unsafe.Pointer
-	constructor, ok := sym.(func() unsafe.Pointer)
-	if !ok {
-		return nil, fmt.Errorf("symbol %s does not match language constructor signature", constructorSymbol)
-	}
-
-	langPtr := constructor()
-	return sitter.NewLanguage(langPtr), nil
-}
+```bash
+go run .
 ```
 
----
+The example uses the pinned Python binding and closes C-allocated parser and tree objects.
 
-## 3. Running Tree-Sitter Queries (`.scm`)
+External modules cannot import this project's `internal/grammars` registry. That tagged registry is a repository-internal convenience, not the public distribution API.
 
-Published grammars in `data/tree-sitter/grammar/<language>/queries/` contain `.scm` query files (such as `highlights.scm` or `tags.scm`).
+## Use a published native library
 
-To execute a query against a parsed syntax tree:
+The published `.so`, `.dylib`, and `.dll` files expose a C ABI. Go's `plugin.Open` loads Go plugins, not these parser libraries.
 
-```go
-package main
+A native-library integration must:
 
-import (
-	"fmt"
-	"os"
+1. Select an artifact for the consumer's OS and architecture.
+2. Verify its checksum against trusted release metadata.
+3. Compare its measured parser ABI with the consumer runtime's supported range.
+4. Load it with the platform library loader.
+5. Resolve the configured C constructor, such as `tree_sitter_python`.
+6. Pass the returned language pointer to a compatible Tree-sitter runtime.
+7. Keep the library loaded while any parser, tree, query, or language reference uses its data.
 
-	"github.com/michaelbomholt665/go-tree-sitter/internal/grammars"
-	sitter "github.com/tree-sitter/go-tree-sitter"
-)
+Use a maintained C interop loader or implement a platform-specific CGo bridge. The project's native validator demonstrates Unix and Windows loading, but it is an internal implementation, not an exported loader API.
 
-func main() {
-	lang := grammars.GetLanguage("python")
-	parser := sitter.NewParser()
-	defer parser.Close()
-	_ = parser.SetLanguage(lang)
+A manifest describes the artifact; it does not make an incompatible architecture or ABI loadable.
 
-	source := []byte("def calculate(x, y):\n    return x + y\n")
-	tree := parser.Parse(source, nil)
-	defer tree.Close()
+## Export artifacts for a consumer
 
-	// 1. Read query string (or read from queries/highlights.scm)
-	queryStr := `(function_definition name: (identifier) @func.name)`
+From a configured builder installation:
 
-	// 2. Compile query
-	query, err := sitter.NewQuery(lang, queryStr)
-	if err != nil {
-		panic(err)
-	}
-	defer query.Close()
-
-	// 3. Execute query cursor
-	cursor := sitter.NewQueryCursor()
-	defer cursor.Close()
-
-	matches := cursor.Matches(query, tree.RootNode(), source)
-	for match := matches.Next(); match != nil; match = matches.Next() {
-		for _, capture := range match.Captures {
-			captureName := query.CaptureNameForId(capture.Index)
-			nodeText := string(source[capture.Node.StartByte():capture.Node.EndByte()])
-			fmt.Printf("Matched @%s: %s\n", captureName, nodeText)
-		}
-	}
-}
+```bash
+ts-build export --language python --to ./consumer-grammars
 ```
 
----
+This copies the published `python/` directory. Export does not compile the consumer or add a Go module dependency.
 
-## 4. Reading `node-types.json` for AST Reflection
+If the consumer needs AST field names, use `compact-node-types.yaml` or `node-types.json`. If it needs queries, retain the published `.scm` files.
 
-The `data/tree-sitter/grammar/<language>/node-types.json` artifact provides the complete structural schema of AST node types emitted by the grammar.
+## Check support and licensing separately
 
-To inspect node definitions:
+A successful sample parse does not establish full source-language version support. Review revision-specific evidence.
 
-```go
-package main
-
-import (
-	"encoding/json"
-	"fmt"
-	"os"
-)
-
-type NodeType struct {
-	Type   string `json:"type"`
-	Named  bool   `json:"named"`
-	Fields map[string]struct {
-		Multiple bool     `json:"multiple"`
-		Required bool     `json:"required"`
-		Types    []struct {
-			Type  string `json:"type"`
-			Named bool   `json:"named"`
-		} `json:"types"`
-	} `json:"fields,omitempty"`
-}
-
-func main() {
-	data, err := os.ReadFile("data/tree-sitter/grammar/python/node-types.json")
-	if err != nil {
-		panic(err)
-	}
-
-	var schema []NodeType
-	if err := json.Unmarshal(data, &schema); err != nil {
-		panic(err)
-	}
-
-	fmt.Printf("Loaded %d Python AST node type definitions.\n", len(schema))
-}
-```
-
----
-
-## 5. Using `compact-node-types.yaml` for LLM Context & Tooling
-
-When `compact-node-types.yaml` is published in the catalog (`data/tree-sitter/grammar/<language>/compact-node-types.yaml`), it can be parsed with Go's `gopkg.in/yaml.v3` or directly embedded into LLM prompt contexts for query generation and code synthesis:
-
-```go
-package main
-
-import (
-	"fmt"
-	"os"
-
-	"gopkg.in/yaml.v3"
-)
-
-type CompactSchema struct {
-	Supertypes map[string][]string `yaml:"supertypes"`
-	Nodes      map[string]struct {
-		Fields   map[string]string `yaml:"fields,omitempty"`
-		Children string            `yaml:"children,omitempty"`
-	} `yaml:"nodes"`
-}
-
-func main() {
-	yamlBytes, err := os.ReadFile("data/tree-sitter/grammar/python/compact-node-types.yaml")
-	if err != nil {
-		panic(err)
-	}
-
-	var schema CompactSchema
-	if err := yaml.Unmarshal(yamlBytes, &schema); err != nil {
-		panic(err)
-	}
-
-	fmt.Printf("Loaded compact schema: %d supertypes, %d node types.\n",
-		len(schema.Supertypes), len(schema.Nodes))
-}
-```
-
-Because `compact-node-types.yaml` achieves 60%–80% token reduction while preserving all field requirements (`?`), multiplicity (`[...]`), and union types (`|`), it is the recommended format when supplying grammar schemas to LLM prompts.
-
+A Go module license report also does not verify every native source license. See [NOTICE](../../NOTICE.md) and [Dual-mode validation](../explanation/dual-mode-validation.md).

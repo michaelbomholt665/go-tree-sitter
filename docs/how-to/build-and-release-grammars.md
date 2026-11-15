@@ -1,177 +1,106 @@
-# How to Build and Release Grammars
+# Build and release grammars
 
-This guide demonstrates how to build, compile, validate, and publish Tree-sitter grammars using both the [`Makefile`](file:///home/michael/projects/go/tree-sitter/Makefile) and the [`ts-build`](file:///home/michael/projects/go/tree-sitter/cmd/ts-build/main.go) command-line interface.
+Use this guide after installing the configured toolchain. For a first isolated Python build, follow the [tutorial](../tutorials/getting-started.md).
 
----
-
-## 1. Running the Full Default Release
-
-To run the complete host release pipeline (build sources, compile native libraries, losslessly generate `compact-node-types.yaml`, publish to catalog, and automatically delete intermediate build caches):
+## 1. Confirm configuration and pins
 
 ```bash
-# Build, compile, compact, publish, and clean all 42 grammars
-make build-all
-
-# Or run the legacy release target:
-make release
+ts-build config path
+ts-build config validate
+ts-build list --language python
+ts-build config get tree_sitter_cli_version
+ts-build config get targets
 ```
 
-This target automatically executes four phases:
-1. `check-tree-sitter`: Verifies that `tree-sitter` CLI is installed on `$PATH`.
-2. `grammar-build`: Clones repositories and generates C sources for all configured languages.
-3. `compile`: Compiles shared libraries (`.so`, `.dylib`, or `.dll`) for the target.
-4. `move`: Validates artifacts, losslessly generates `compact-node-types.yaml`, writes `manifest.json`, atomically updates `data/tree-sitter/grammar/`, and wipes intermediate build caches.
+Use `--config ./tree-sitter-config.yaml` on each command if you require the repository configuration.
 
----
+Every grammar must pin a full, 40-character commit SHA. The generator and compiler versions must match the selected configuration.
 
-## 2. Building a Specific Language
-
-To build and release a single grammar rapidly, choose the approach that suits your workflow:
-
-### Option A: Interactive Wizard (Recommended)
+## 2. Generate sources
 
 ```bash
-go run ./cmd/ts-build wizard
+ts-build build --language python
 ```
 
-The wizard prompts you to select pipeline mode, target platforms, artifacts, and grammars interactively. A summary is displayed before anything runs, and you confirm with a single keypress. This is the recommended approach for day-to-day local builds.
+Generation writes parser sources and source provenance into the configured build workspace.
 
-### Option B: One-Step Makefile Pipeline
+If checkout fails, inspect the preserved workspace before rebuilding.
+
+WARNING: `build --force` removes the existing intermediate workspace for the selected grammar. Preserve manual changes before running it.
 
 ```bash
-make build-all LANG=python
+ts-build build --language python --force
 ```
 
-This single command clones python, compiles the native library, generates and validates `compact-node-types.yaml`, updates `manifest.json`, publishes to `data/tree-sitter/grammar/python/`, and completely deletes the intermediate `build/python/` directory.
-
-### Option C: Step-by-Step via CLI
-
-To control each phase individually using [`ts-build`](file:///home/michael/projects/go/tree-sitter/cmd/ts-build/main.go):
-
-#### Step 1: Generate grammar source
-```bash
-go run ./cmd/ts-build build --language python
-```
-
-Use `--force` (`-f`) if you need to wipe existing clones and re-fetch from git:
-```bash
-go run ./cmd/ts-build build -l python -f
-```
-
-#### Step 2: Compile the shared library
-```bash
-go run ./cmd/ts-build compile --language python
-```
-
-#### Step 3: Validate, compact, and publish
-```bash
-go run ./cmd/ts-build move --language python --compact --force
-```
-
----
-
-## 3. Controlling Progress Output
-
-`ts-build` defaults to clean, concise status updates:
-
-```text
-[✓] build     python                         (1.4s)
-[✓] compile   python [linux/amd64]           (0.8s)
-[✓] move      data/tree-sitter/grammar       [1 grammars, 1 binaries] (0.2s)
-```
-
-### Streaming Verbose Logs
-If a build failure occurs or you need to inspect raw git/npm/compiler output, pass `--verbose` (`-v`):
+## 3. Compile the host artifact
 
 ```bash
-go run ./cmd/ts-build build -v -l python
+ts-build compile --language python
 ```
 
-### Quiet Mode (CI / Scripting)
-To suppress all non-error output:
+Compilation checks source provenance, builds fresh output, and records the artifact checksum. Do not edit source or binary provenance to bypass a mismatch.
+
+For other targets, use [Cross-compile grammars](cross-compile-grammars.md). For WASM, use [Compile WebAssembly parsers](compile-webassembly-parsers.md).
+
+## 4. Publish a new grammar output
 
 ```bash
-go run ./cmd/ts-build build -q
+ts-build move --language python --compact --clean=false
 ```
 
----
+The mover locks the catalog, copies it to staging, validates selected artifacts, writes downstream metadata, and publishes only after validation succeeds.
 
-## 4. Selecting Artifact Move Modes & Preservation Flags
+The normal manifest requires a measured ABI for every included native binary. Static foreign validation alone cannot supply that measurement.
 
-When moving artifacts, you can choose which files accompany the compiled binaries via CLI flags or the `output.default_move_mode` configuration setting:
+`--clean=false` retains intermediate files. Omitting it uses the selected cleanup behavior.
 
-| Flag | Included Artifacts | Use Case |
-| :--- | :--- | :--- |
-| `--both` (default) | Binaries + `node-types.json` + `queries/` | Full feature release |
-| `--json` | Binaries + `node-types.json` | Syntax trees and AST node inspection only |
-| `--scm` | Binaries + `queries/` | Syntax highlighting and query matching only |
+## 5. Replace existing grammar output
 
-### Granular Asset Preservation Flags
+WARNING: `move --force` replaces the complete selected grammar directory. Artifacts absent from the new move are not retained.
 
-In addition to the base move modes, `ts-build move` provides granular flags to preserve additional source and binary artifacts:
-
-| Flag | Artifact Published | Manifest Flag Updated |
-| :--- | :--- | :--- |
-| `--compact` | Generates and validates `compact-node-types.yaml` alongside `node-types.json` | `has_compact_node_types: true` |
-| `--check-compact` | Audits existing `compact-node-types.yaml` against `node-types.json` | `has_compact_node_types: true` |
-| `--wasm` | Copies and checksums WebAssembly parser `tree-sitter-<lang>.wasm` | `has_wasm: true` |
-| `--source` / `--c-source` | Preserves C/C++ parser sources under `src/` (`parser.c`, `scanner.c`, headers) | `has_c_source: true` |
-| `--js` | Preserves grammar specification `grammar.js` | `has_js: true` |
-| `--scm=false` (or `--no-scm`) | Skips copying query files (`queries/`) | `has_queries: false` |
-| `--manifest=false` (or `--no-manifest`) | Skips generating `manifest.json` | (manifest omitted) |
-
-Example publishing complete sources, WASM, and compact node types:
-```bash
-go run ./cmd/ts-build move -l python --source --js --wasm --compact --force
-```
-
----
-
-## 5. Cleaning and Pruning Build Directories
-
-### Build Cache Pruning (`--prune`)
-Cloning upstream repositories can introduce significant disk bloat from `.git` histories, `node_modules`, test corpus directories, and intermediate object files (`*.o`). 
-
-You can prune this cache while strictly preserving grammar sources (`grammar.js`, `src/`), queries, and ecosystem manifests (`tree-sitter.json`, `package.json`, `Cargo.toml`, etc.):
+Compile every artifact you intend to keep before publishing:
 
 ```bash
-# Prune immediately during build
-go run ./cmd/ts-build build -l python --prune
-
-# Or prune existing build directories after the fact
-go run ./cmd/ts-build clean -l python --prune
+ts-build move --language python --compact --clean=false --force
 ```
 
-### Full Clean
-By default, `ts-build move` cleans up intermediate build directories under `build/<language>/` upon successful publication.
+The mover preserves unrelated grammar directories.
 
-To retain intermediate build artifacts for debugging or inspection:
-```bash
-go run ./cmd/ts-build move --clean=false
-```
+Existing catalog replacement requires supported atomic exchange operations. Linux and macOS support this on compatible filesystems. Windows replacement is not implemented.
 
-To wipe intermediate build directories for a language completely:
-```bash
-go run ./cmd/ts-build clean --language python
-```
+If exchange is unsupported, choose a new catalog root in a separate release configuration. Do not delete the live catalog to bypass this protection.
 
-To clean intermediate test output and coverage profiles manually:
-```bash
-make clean
-```
+## 6. Select downstream artifacts
 
----
+| Option | Purpose |
+| --- | --- |
+| `--compact` | Generate and validate compact AST YAML |
+| `--check-compact` | Audit existing compact YAML |
+| `--source` | Include parser C/C++ sources |
+| `--js` | Include grammar JavaScript |
+| `--wasm` | Include the compiled WASM artifact |
+| `--scm=false` | Omit query files |
+| `--manifest=false` | Omit the custom downstream manifest |
 
-## 6. Verifying the Published Catalog
+`manifest.json` serves consumers such as the graph builder. `compact-node-types.yaml` serves AI agents and other AST consumers.
 
-Once published, inspect the catalog under `data/tree-sitter/grammar/<language>/`:
+Manifest-only regeneration is blocked. Rebuild, compile, and publish validated artifacts instead.
+
+## 7. Audit and export
 
 ```bash
-ls -l data/tree-sitter/grammar/python/
+ts-build compact --language python --check
+ts-build export --language python --to ./consumer-grammars
 ```
 
-Verify that `manifest.json` is present and that its checksums match the binary files:
+Export copies already published output. It does not build parsers or measure ABIs.
+
+If the selected destination grammar already exists, export requires explicit `--force`. Other destination directories remain untouched.
+
+WARNING: `clean` removes intermediate build files. Published grammar output is separate.
+
 ```bash
-sha256sum data/tree-sitter/grammar/python/python-*.so
-grep checksum_sha256 data/tree-sitter/grammar/python/manifest.json
+ts-build clean --language python
 ```
+
+Do not use `clean python`; positional grammar arguments are rejected. Omit `--language` only when you intend to select the entire configured catalog.

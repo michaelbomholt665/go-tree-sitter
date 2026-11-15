@@ -198,6 +198,7 @@ Rule numbers describe recorded evidence; this command does not fetch sources, ve
 If the revisions differ, the effective claim is `unverified`, bounds display as unknown, and the assessment is `stale`.
 The JSON retains historical bounds inside `assessment`; they do not describe the active revision.
 Package versions and parser ABIs are not source-language version bounds.
+See [Configure runtime policy and inspect the catalog](../how-to/configure-runtime-and-catalog.md) for a task-oriented workflow.
 
 ### `ts-build support show` / `ts-build support update`
 
@@ -251,7 +252,7 @@ Record the exact grammar revision, suite identity, fixture checksums, assertions
 Calculate the report's SHA-256 after completing it. The command accepts any regular report file; it does not certify its contents.
 Fixture evidence is Rule 3. Documentation-backed verification remains Rule 2, not Rule 3.
 Successful isolated fixtures do not prove full conformance or a continuous version range.
-See [VERIFY_VERSIONS.md](../../VERIFY_VERSIONS.md) for the evidence policy.
+See [VERIFY_VERSIONS.md](VERIFY_VERSIONS.md) for the evidence policy.
 
 Relative fixture report paths resolve against the assessment file's directory, or the current directory for stdin.
 The command saves local report references as absolute paths. Reports can remain outside this repository.
@@ -262,7 +263,7 @@ The checksum check verifies report integrity, not the truth of the test results.
 The command preserves unrelated values, YAML comments, key order, and file permissions. YAML formatting can change.
 It stages the replacement beside the selected configuration and checks for content changes before replacing the file.
 Cooperating update commands use `<config>.support.lock`; symlink configurations are rejected when writing.
-If an interrupted process leaves a lock file, confirm no update is running before removing that lock.
+The OS releases the advisory lock when its owner exits. A persistent lock file is not proof of an active lock; do not delete it to bypass a writer.
 Other editors do not honor this lock; avoid simultaneous edits from those programs.
 The command does not change grammar pins, other runtime settings, or published manifests.
 
@@ -408,7 +409,11 @@ ts-build compile [flags]
 
 ### 3. `ts-build move`
 
-Stages compiled binaries, AST metadata, and query files; performs dual-mode validation; generates `manifest.json`; and atomically publishes the release catalog.
+Stages compiled binaries, AST metadata, and query files; validates artifacts; generates optional downstream metadata; and publishes the catalog.
+
+New catalogs use rename. Replacing an existing catalog requires a supported atomic directory exchange on Linux or macOS. Windows replacement is not implemented; an unsupported exchange preserves the existing catalog.
+
+Normal manifests require measured native ABIs. Foreign static validation does not supply those measurements, even with `--allow-cross-validation`.
 
 #### Usage
 ```bash
@@ -430,7 +435,7 @@ ts-build move [flags]
 | `--both` | | bool | `false` | Legacy move mode: Move binaries, `node-types.json`, and `queries/`. |
 | `--json` | | bool | `false` | Legacy move mode: Move binaries and `node-types.json` only. |
 | `--clean` | | bool | `true` | Clean the intermediate build directory for each successfully published language. Pass `--clean=false` to preserve build directories. |
-| `--force` | `-f` | bool | `false` | Overwrite existing output files in the catalog. |
+| `--force` | `-f` | bool | `false` | Replace complete selected grammar directories, including removal of artifacts absent from the new move. |
 | `--allow-cross-validation` | | bool | `false` | Allow cross-platform static validation for non-host binaries. |
 | `--static-cross-validation`| | bool | `false` | Alias for `--allow-cross-validation`. |
 
@@ -510,7 +515,7 @@ Displays the version of `ts-build`.
 
 ```bash
 ts-build version
-# Output: ts-build version 1.0.0
+# Output: ts-build version 1.10.0
 ```
 
 ---

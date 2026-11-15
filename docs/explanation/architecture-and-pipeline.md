@@ -1,117 +1,71 @@
-# Architecture and Pipeline Design
+# Architecture and pipeline
 
-This document explains the architectural principles, component responsibilities, and execution lifecycle of the **go-tree-sitter** grammar build system.
+`ts-build` separates source generation, compilation, and publication. This separation lets users inspect intermediate results and select artifacts without rebuilding every stage.
 
----
+## Configuration boundary
 
-## 1. High-Level Architectural Goals
+The selected YAML file defines grammar repositories, full commit pins, tool versions, targets, paths, and runtime policy.
 
-Tree-sitter grammars are polyglot artifacts: they originate as JavaScript DSL specifications in upstream git repositories, get converted to C source files by Node-based CLI tools, compile into native machine code shared libraries via platform C/C++ toolchains, and finally get consumed by Go runtime applications.
+Normal use selects a per-user configuration. A current-directory `.env` containing `TS_BUILD_ENV=DEVELOPMENT` selects `./tree-sitter-config.yaml`. An explicit `--config` takes precedence.
 
-Managing this lifecycle reliably across dozens of grammars and multiple operating systems requires solving several challenges:
-- **Build isolation**: Individual grammar failures must not corrupt existing release catalogs.
-- **Reproducibility**: Builds must be bit-for-bit reproducible and traceable to specific git commits.
-- **Cross-platform compilation**: Linux hosts must be able to compile and validate Windows and macOS libraries.
-- **Atomic publication**: Consumers reading `data/tree-sitter/grammar/` must never observe a half-built or corrupted state.
+Relative paths resolve from the configuration directory. The embedded catalog seeds a missing user configuration; it does not overwrite an existing one during upgrades.
 
-To achieve these goals, `go-tree-sitter` divides the build lifecycle into three distinct, decoupled phases.
+The catalog contains 65 entries in this release. The selected user configuration can contain a different set.
 
----
+## Pipeline boundaries
 
-## 2. The 3-Phase Pipeline
-
-```
-┌─────────────────┐       ┌─────────────────┐       ┌──────────────────────┐
-│  Phase 1: BUILD │ ───►  │Phase 2: COMPILE │ ───►  │    Phase 3: MOVE     │
-│                 │       │                 │       │  (Stage, Validate &  │
-│                 │       │                 │       │   Publish Atomic)    │
-└─────────────────┘       └─────────────────┘       └──────────────────────┘
-         │                         │                           │
-         ▼                         ▼                           ▼
-- Pinned git clone        - Target compiler          - Temp staging dir
-- Extract commit epoch      (gcc, clang, zig)        - Dual-mode validation
-- npm locked install      - CFLAGS / CXXFLAGS        - Manifest generation
-- tree-sitter generate    - Shared lib output        - Atomic directory swap
-- .source-provenance.json - .provenance.json         - Cleaner reset
+```mermaid
+flowchart TD
+    Config["Selected configuration"] --> Build["build: checkout and generate"]
+    Build --> Sources["Generated sources and source provenance"]
+    Sources --> Compile["compile: fresh temporary artifact"]
+    Compile --> Binary["Validated artifact and binary provenance"]
+    Binary --> Move["move: lock, copy, and stage"]
+    Move --> Validate["Validate binaries, queries, and metadata"]
+    Validate --> Publish["Publish by rename or supported exchange"]
+    Publish --> Catalog["Published catalog"]
 ```
 
-### Phase 1: `build` (Source Generation & Pruning)
-- **Goal**: Transform upstream grammar repositories into generated C code and schema files.
-- **Execution**:
-  - Clones the upstream repository at the pinned 40-character commit hash (`revision`).
-  - Extracts the exact git commit timestamp to set `SOURCE_DATE_EPOCH`.
-  - Installs npm dependencies using `npm ci --ignore-scripts` only if a `package-lock.json` is present; otherwise skips npm to use checked-in sources.
-  - Synthesizes `tree-sitter.json` if missing.
-  - Invokes `tree-sitter generate --abi 15` (with fallback through `abi_range` if necessary).
-  - Captures generation metadata and writes `.source-provenance.json`.
-  - Optionally prunes build caches (`.git`, `node_modules`, test suites) if `--prune` or `cfg.Prune` is enabled.
+### Source generation
 
-### Phase 2: `compile` (Binary & WASM Compilation)
-- **Goal**: Compile generated C/C++ parser code into native dynamic shared libraries (`.so`, `.dylib`, `.dll`) and WebAssembly artifacts.
-- **Execution**:
-  - Resolves target architecture from configuration or command-line flags (`--os`, `--arch`).
-  - Selects the appropriate toolchain (native compiler, dedicated cross-compiler, or synthetic Zig wrapper).
-  - When `--wasm` is passed, detects Emscripten (`emcc`) or sets up an ephemeral container engine wrapper (`docker`/`podman`) using `emscripten/emsdk` to emit `tree-sitter-<lang>.wasm`.
-  - Injects `SOURCE_DATE_EPOCH` and uniform optimization flags (`-O2`, `-fPIC`).
-  - Emits the binary into `build/{lang}/{arch}/` alongside a `.provenance.json` recording compiler identity and compilation parameters.
+The builder checks out the configured 40-character revision and invokes the pinned Tree-sitter generator. It records the commit timestamp and source hashes.
 
-### Phase 3: `move` (Validation, Compaction, Manifest Generation & Atomic Publication)
-- **Goal**: Guarantee correctness before replacing published catalog files.
-- **Execution**:
-  - Creates an isolated staging directory (`.grammar-staging-*`) seeded from the existing release.
-  - Copies compiled binaries, `node-types.json`, and query files (`.scm`) into staging.
-  - When `--compact` is requested, generates `compact-node-types.yaml` and executes strict bidirectional lossless AST validation (`ValidateCapture`).
-  - Stages WebAssembly artifacts (`--wasm`), C/C++ sources (`--source`), or `grammar.js` (`--js`) if requested.
-  - Executes **Dual-Mode Validation** across all staged native libraries.
-  - Computes final-byte SHA-256 hashes and generates `manifest.json`.
-  - Atomically swaps the staging directory with the production catalog directory (`data/tree-sitter/grammar`).
-  - Cleans up intermediate build directories (unless `--clean=false`).
+A failed existing checkout is preserved unless the user explicitly authorizes removal with `--force`. Generation ABI fallback follows runtime policy; a per-language ABI override disables that fallback.
 
----
+### Compilation
 
-## 3. Component Architecture & Dependency Injection
+The compiler verifies generated inputs against source provenance. It builds into a temporary output location rather than accepting an old final artifact after a failed command.
 
-The implementation resides in [`internal/tree-sitter/`](file:///home/michael/projects/go/tree-sitter/internal/tree-sitter) and adheres to clean architecture principles:
+Successful compilation records the artifact checksum and compiler metadata. These checks bind provenance to bytes; they do not authenticate an upstream repository.
 
-```
-cmd/ts-build/main.go
-         │
-         ▼
-internal/tree-sitter/
-├── cli.go              <-- App (Cobra command tree, flag wiring)
-├── config.go           <-- Config parser, validator, and path templater
-├── reporter.go         <-- TextReporter (progress) & SilentReporter
-└── build/
-    ├── builder.go      <-- Builder interface & git/generator execution
-    ├── compiler.go     <-- Compiler interface, cross-toolchain discovery & WASM
-    ├── mover.go        <-- Mover interface, catalog staging & atomic publish
-    ├── compact.go      <-- Compactor, compact YAML generation & lossless validation
-    ├── validator.go    <-- NativeValidator (dlopen + ELF/Mach-O/PE inspection)
-    ├── manifest.go     <-- Manifest generator & schema v2 validator
-    ├── cleaner.go      <-- Cleaner (cache pruning & intermediate directory resets)
-    ├── provenance.go   <-- SourceProvenance & BinaryProvenance data models
-    ├── paths.go        <-- Path resolver functions & template evaluation
-    └── native_loader_*.go <-- Platform-specific dynamic loader bindings
-```
+### Staging and validation
 
-### Decoupling and Testability
-Every major subsystem implements an interface (`CommandRunner`, `PathLookup`, `Builder`, `Compiler`, `Mover`, `ArtifactValidator`, `Reporter`). This enables comprehensive unit and integration testing without invoking external compilers or modifying the host filesystem during tests.
+The mover takes a per-catalog interprocess lock before copying the current catalog into staging. The lock spans recovery, staging, and publication, so concurrent updates do not overwrite each other's catalog changes.
 
----
+The mover verifies binary checksums and configured source identities. Host validation measures parser ABIs. Foreign validation checks binary structure without measuring an ABI.
 
-## 4. Atomic Staging and Zero-Downtime Rollback
+Manifest generation requires measured binary metadata. Compact schema generation performs a semantic round-trip check.
 
-In-place file copying is vulnerable to partial failures: if grammar 18 of 42 fails during compilation or validation, an in-place build leaves the catalog in an inconsistent, broken state.
+## Publication boundary
 
-`go-tree-sitter` guarantees catalog integrity using filesystem-level directory swaps:
+For a new catalog, publication renames the staged directory into place.
 
-1. **Seed Staging**: A temporary hidden directory `.grammar-staging-<random>` is created in the destination filesystem and pre-seeded with current catalog contents.
-2. **Stage Updates**: Updated grammars are copied into staging and verified.
-3. **Full Catalog Validation**: The entire staged directory is validated in aggregate by [`validateCatalog`](file:///home/michael/projects/go/tree-sitter/internal/tree-sitter/build/mover.go#L339). If any grammar fails, the staging directory is deleted, and the production catalog remains untouched.
-4. **Atomic Rename**:
-   - The current production catalog `data/tree-sitter/grammar` is renamed to `data/tree-sitter/grammar.previous`.
-   - The staged directory `.grammar-staging-*` is renamed to `data/tree-sitter/grammar`.
-   - On success, `data/tree-sitter/grammar.previous` is removed.
-   - If the rename fails, `grammar.previous` is restored immediately.
+For an existing catalog, publication exchanges the staged and current directories with an operating-system operation. Linux and macOS implementations depend on filesystem support. The implementation does not replace an existing catalog on Windows.
 
-This design ensures that callers reading `data/tree-sitter/grammar/` always observe a valid, completely validated release.
+An unsupported exchange fails without removing the current catalog. `--force` authorizes replacement of selected grammar output; it does not enable an unsafe rename fallback.
+
+Recovery preserves the last release. If a legacy `.previous` directory exists without a current catalog, recovery restores it before continuing.
+
+Cancellation is checked before publication and cleanup. Cancellation after a completed publication does not undo that publication.
+
+## Cleanup boundary
+
+Cleanup affects intermediate workspaces, not published grammar output. `move --clean=false` retains the checkout for inspection. Runtime cleanup policy controls full cleanup versus pruning.
+
+A successful publish and a cleanup result are distinct outcomes. Keep workspaces until release inspection is complete if diagnosis requires generated sources.
+
+## Downstream metadata
+
+`manifest.json` serves downstream consumers such as the graph builder. `compact-node-types.yaml` serves AST consumers, including AI agents. Neither file is an internal prerequisite for compiling a parser.
+
+See [Build and release](../how-to/build-and-release-grammars.md), [Dual-mode validation](dual-mode-validation.md), and [Provenance](reproducible-builds-and-provenance.md).

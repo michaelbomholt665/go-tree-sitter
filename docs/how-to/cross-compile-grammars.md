@@ -1,145 +1,87 @@
-# How to Cross-Compile for Windows and macOS
+# Cross-compile grammars
 
-This guide explains how to compile and validate Windows (`.dll`) and macOS (`.dylib`) Tree-sitter binaries from a Linux host environment.
+Cross-compilation produces artifacts for another operating system or architecture. It does not prove that those artifacts execute correctly on that target.
 
----
+## 1. Choose the release contract
 
-## 1. Toolchain Prerequisites
+| Goal | Required validation |
+| --- | --- |
+| Publish a normal manifest with measured parser ABIs | Execute validation on a compatible target host |
+| Produce foreign artifacts for later target-host validation | Compile and retain artifacts plus provenance |
+| Publish raw foreign artifacts without the custom manifest | Explicit static validation and `--manifest=false` |
 
-Cross-compilation requires either platform-specific cross-compilers or [Zig](https://ziglang.org/) installed on your `$PATH`.
+Do not combine foreign artifacts into a normal manifest by copying the configured generation ABI into metadata.
 
-### Option A: Zig (Recommended, Zero Configuration)
+## 2. Configure the cross toolchain
 
-If `zig` is installed on `$PATH`, the compiler automatically detects it and creates temporary `cc-wrapper` and `cxx-wrapper` scripts targeting the requested foreign triple:
-- Linux amd64: `x86_64-linux-gnu`
-- Windows amd64: `x86_64-windows-gnu`
-- macOS amd64: `x86_64-macos`
-- macOS arm64: `aarch64-macos`
-
-To install Zig:
-```bash
-# Example via package manager or direct download:
-curl -LO https://ziglang.org/download/0.13.0/zig-linux-x86_64-0.13.0.tar.xz
-tar -xf zig-linux-x86_64-0.13.0.tar.xz
-export PATH="$PWD/zig-linux-x86_64-0.13.0:$PATH"
-zig version
-```
-
-### Option B: Dedicated Cross-Compilers
-
-If you prefer native toolchains:
-- **Windows amd64**: `x86_64-w64-mingw32-gcc` and `x86_64-w64-mingw32-g++` (Ubuntu: `apt install mingw-w64`).
-- **macOS amd64 & arm64**: osxcross toolchain with `o64-clang` and `oa64-clang`.
-
----
-
-## 2. Compiling Foreign Targets
-
-### Windows (amd64)
-
-Compile grammar sources into Windows `.dll` shared libraries:
+Inspect target settings:
 
 ```bash
-# Using Makefile
-make compile-windows
-
-# Or using the ts-build CLI directly
-go run ./cmd/ts-build compile --os windows --arch amd64
+ts-build config get targets
+ts-build config get runtime.compiler.allow_fallback
 ```
 
-To compile a single language:
-```bash
-go run ./cmd/ts-build compile --os windows --arch amd64 --language python
-```
+Set each target's OS, architecture, triple, compiler, and compiler version. If the grammar has a C++ scanner, configure a compatible C++ compiler.
 
-Output:
-```text
-[✓] compile   python [windows/amd64]         (1.1s)
-```
+The target compiler must actually support the selected triple. A configured name or a Zig installation alone does not establish a usable cross toolchain.
 
-Generated binary:
-- `build/python/amd64/python-v0.25.0-windows-amd64.dll`
-- `build/python/amd64/python-v0.25.0-windows-amd64.dll.provenance.json`
+Use explicit compiler paths and matching version pins for repeatable builds. Windows hosts do not support the current Zig/Emscripten shell-wrapper paths.
 
----
+## 3. Generate once and compile a foreign target
 
-### macOS (Apple Silicon arm64 & Intel amd64)
-
-Compile for both macOS architectures:
+For example, from Linux with a configured Windows amd64 cross compiler:
 
 ```bash
-# Using Makefile (compiles both amd64 and arm64)
-make compile-mac
-
-# Or using ts-build CLI
-go run ./cmd/ts-build compile --os macos --arch arm64
-go run ./cmd/ts-build compile --os macos --arch amd64
+ts-build build --language python
+ts-build compile --language python --os windows --arch amd64 --allow-cross-validation
 ```
 
-Output:
-```text
-[✓] compile   python [macos/arm64]           (0.9s)
-[✓] compile   python [macos/amd64]           (0.9s)
-```
-
-Generated binaries:
-- `build/python/arm64/python-v0.25.0-macos-arm64.dylib`
-- `build/python/amd64/python-v0.25.0-macos-amd64.dylib`
-
----
-
-## 3. Full Multi-Platform Release Pipeline
-
-To build sources once, compile for all platforms, validate every native binary, and publish the unified catalog:
+Other configured targets use the same selection pattern:
 
 ```bash
-make release-all
+ts-build compile --language python --os macos --arch arm64 --allow-cross-validation
 ```
 
-This target runs:
+These commands require working cross compilers. They are not toolchain installation commands.
+
+Keep generated sources and provenance until target validation completes.
+
+## 4. Validate releases on their target hosts
+
+For normal downstream manifests, use a runner for each supported target. On each runner, select matching configuration and perform the host pipeline:
+
 ```bash
-# 1. Generate grammar sources
-go run ./cmd/ts-build build --config tree-sitter-config.yaml
-
-# 2. Compile all targets
-go run ./cmd/ts-build compile --config tree-sitter-config.yaml --os linux --arch amd64
-go run ./cmd/ts-build compile --config tree-sitter-config.yaml --os windows --arch amd64
-go run ./cmd/ts-build compile --config tree-sitter-config.yaml --os macos --arch amd64
-go run ./cmd/ts-build compile --config tree-sitter-config.yaml --os macos --arch arm64
-
-# 3. Validate binaries (dynamic for host, static for foreign) and publish
-go run ./cmd/ts-build move --config tree-sitter-config.yaml --force
+ts-build build --language python
+ts-build compile --language python
+ts-build move --language python --compact --clean=false
 ```
 
----
+Ensure `OS_TARGET` and the target architecture match that runner. Choose a fresh release destination if catalog replacement is unsupported.
 
-## 4. How Cross-Validation Works
+A target runner must load the binary and measure its ABI. A cross-build or mocked test does not provide native execution evidence.
 
-When running `move` on a Linux host with Windows `.dll` and macOS `.dylib` binaries present:
+## 5. Publish without a manifest only when intentional
 
-1. **Host Binaries (Linux ELF)**:
-   - Dynamically loaded via `dlopen`.
-   - Executes `tree_sitter_<lang>()` constructor.
-   - Parses the language's minimal sample string with `go-tree-sitter`.
-2. **Foreign Binaries (Windows PE & macOS Mach-O)**:
-   - Evaluated without `dlopen` using Go's standard library `debug/pe` and `debug/macho` packages.
-   - Inspects file headers, target CPU architecture (`amd64`, `arm64`), section tables, and dynamic symbol export tables.
-   - Asserts that the sole exported constructor matches `tree_sitter_<grammar>`.
-   - Reconciles measured provenance ABI against the generator manifest.
+WARNING: `--manifest=false` removes measured-ABI downstream metadata. Use it only if the consumer accepts that contract.
 
----
+For a foreign-only workspace with static validation explicitly allowed:
 
-## 5. Troubleshooting Cross-Compilation
-
-### Missing Compiler Toolchain Error
-```text
-compile python for windows/amd64: no compiler toolchain available for windows/amd64; install x86_64-w64-mingw32-gcc, zig, or a target-specific cross-compiler
+```bash
+ts-build move --language python --allow-cross-validation --manifest=false --clean=false
 ```
-**Resolution:** Install `mingw-w64` or add `zig` to your `$PATH`.
 
-### `dlopen` Warning during Cross-Compilation
-During `tree-sitter build`, the upstream CLI may print:
-```text
-Error opening dynamic library: ... cannot open shared object file
-```
-The compiler automatically detects that this error comes from foreign binary execution on the host and suppresses it as long as a valid non-empty shared library was created.
+The resulting output is raw distribution material, not a measured-ABI release. Static validation checks binary structure and expected exports; it does not parse samples on the foreign target.
+
+Existing selected grammar output still requires `--force`. Replacement still requires a supported atomic directory exchange.
+
+## Windows setup and testing
+
+Use [TEST-GUIDE.md](../../TEST-GUIDE.md) and the root [PowerShell installer](../../install-windows-tools.ps1) for native Windows development setup.
+
+The optional `-RunGrammarTest` path builds only Python for Windows amd64. It does not run the full Go suite, other grammars, or WASM tests. The script refuses an existing test catalog because Windows replacement is unsupported.
+
+WARNING: The installer's uninstall action removes its listed tools, including tools installed before the script. Inspect the uninstall scope before confirming.
+
+Native Windows and macOS runtime validation remains outstanding for this release.
+
+See [Dual-mode validation](../explanation/dual-mode-validation.md).

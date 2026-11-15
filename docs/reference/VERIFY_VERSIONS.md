@@ -42,7 +42,7 @@ ranges marked `claim: unverified` and explain their uncertainty.
 
 ## Record and report safely
 
-- Follow the field requirements in [Configuration Schema](docs/reference/configuration-schema.md#language-version-assessments-language_support).
+- Follow the field requirements in [Configuration Schema](configuration-schema.md#language-version-assessments-language_support).
   Structural validation does not fetch sources, check report contents/digests, or rerun fixtures.
 - Report each grammar's active and assessed revisions, claim, justified bounds,
   evidence kind/source, and limitations. Missing bounds mean unknown, not unlimited support.
@@ -55,4 +55,4 @@ ranges marked `claim: unverified` and explain their uncertainty.
 - Do not rebuild or republish artifacts merely to research support. Manifests acquire
   metadata through normal binary-validated publication, never manifest-only regeneration.
   Consumers must check the outer manifest `language_support.claim`, not just the historical
-  nested assessment. See [Manifest Schema v2](docs/reference/manifest-schema-v2.md#language_support-object-fields).
+  nested assessment. See [Manifest Schema v2](manifest-schema-v2.md#language_support-object-fields).

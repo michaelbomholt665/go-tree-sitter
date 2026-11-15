@@ -1,95 +1,59 @@
-# How to Synchronize Versions with go.mod
+# Synchronize grammar versions with go.mod
 
-This guide explains how to use the version synchronization tool (`sync-config`) to keep grammar versions declared in [tree-sitter-config.yaml](file:///home/michael/projects/go/tree-sitter/tree-sitter-config.yaml) in sync with the Go module versions listed in [go.mod](file:///home/michael/projects/go/tree-sitter/go.mod).
+Synchronization updates configured grammar package labels from Go module dependencies. It does not select source commits or update revision pins.
 
----
-
-## Why Synchronize Versions?
-
-The `go-tree-sitter` repository maintains dual representations of grammar versions:
-1. **[go.mod](file:///home/michael/projects/go/tree-sitter/go.mod)**: Controls the Go dependencies used by Go bindings in [`internal/grammars/registry.go`](file:///home/michael/projects/go/tree-sitter/internal/grammars/registry.go).
-2. **[tree-sitter-config.yaml](file:///home/michael/projects/go/tree-sitter/tree-sitter-config.yaml)**: Governs which git repositories and tags are cloned by `ts-build`.
-
-The `sync-config` tool parses [go.mod](file:///home/michael/projects/go/tree-sitter/go.mod) and updates [tree-sitter-config.yaml](file:///home/michael/projects/go/tree-sitter/tree-sitter-config.yaml) in-place while preserving all YAML formatting, structure, and comments.
-
----
-
-## Step 1: Preview Version Differences (Dry-Run)
-
-Before modifying the configuration, preview the changes:
+## 1. Choose the files
 
 ```bash
-# Using Makefile
-make sync-config
-
-# Or using the tool directly
-go run ./cmd/sync-config --dry-run
+ts-build config path
+ts-build config get runtime.sync_modules
 ```
 
-If differences are detected, you will see output detailing each changed version:
+The default `go.mod` is beside the selected configuration. If it is elsewhere, pass `--gomod` explicitly.
 
-```text
-  python               v0.24.0  →  v0.25.0
-  typescript           v0.23.2  →  v0.23.3-0.20250130221139-75b3874edb2d
-  tsx                  v0.23.2  →  v0.23.3-0.20250130221139-75b3874edb2d
+The `runtime.sync_modules` map connects module paths to catalog identifiers. Add mappings there instead of changing a hard-coded command table.
 
-(dry-run: no files written)
-```
-
-If the configuration is already up to date, it reports:
-
-```text
-tree-sitter-config.yaml is already up to date.
-```
-
----
-
-## Step 2: Apply Version Updates
-
-To write the updated versions directly into [tree-sitter-config.yaml](file:///home/michael/projects/go/tree-sitter/tree-sitter-config.yaml):
+## 2. Preview the update
 
 ```bash
-# Using Makefile
-make sync-config-apply
-
-# Or using the tool directly
-go run ./cmd/sync-config
+ts-build --config ./tree-sitter-config.yaml sync-config --gomod ./go.mod --dry-run
 ```
 
-Output:
+Inspect each proposed package version. A Go module version is not a source-language version.
 
-```text
-  python               v0.24.0  →  v0.25.0
-  typescript           v0.23.2  →  v0.23.3-0.20250130221139-75b3874edb2d
-  tsx                  v0.23.2  →  v0.23.3-0.20250130221139-75b3874edb2d
+The parser accepts single-line requirements and indented require blocks. It does not require tab-only indentation.
 
-Updated tree-sitter-config.yaml
-```
+## 3. Apply package labels
 
----
-
-## Step 3: Update Commit Revisions
-
-`sync-config` updates the semantic `version:` field. In configuration version `2.0`, an explicit 40-character git commit hash (`revision:`) is also required for reproducible builds.
-
-If a module version changed:
-1. Verify the corresponding upstream commit hash for that version.
-2. Update the `revision:` field in [tree-sitter-config.yaml](file:///home/michael/projects/go/tree-sitter/tree-sitter-config.yaml).
-3. Run `make test` or `go run ./cmd/ts-build build -l <name>` to ensure the commit checks out cleanly.
-
----
-
-## Supported Custom Flags
-
-The `sync-config` utility accepts the following command-line flags:
-
-| Flag | Default | Description |
-| :--- | :--- | :--- |
-| `--config <path>` | `tree-sitter-config.yaml` | Path to the YAML configuration file |
-| `--gomod <path>` | `go.mod` | Path to the `go.mod` file to read |
-| `--dry-run` | `false` | Print changes without modifying files |
-
-Example specifying custom file locations:
 ```bash
-go run ./cmd/sync-config --config path/to/config.yaml --gomod path/to/go.mod --dry-run
+ts-build --config ./tree-sitter-config.yaml sync-config --gomod ./go.mod
 ```
+
+The writer locks the configuration, validates the replacement, and checks that the original file has not changed before replacing it.
+
+If another writer holds the lock, wait for it to finish. A persistent lock file alone does not indicate an active lock.
+
+The writer preserves comments where supported by the YAML update. Do not assume byte-for-byte formatting preservation; inspect the diff.
+
+## 4. Update the corresponding source pins
+
+For every changed package label, identify the matching upstream commit. Update `revision` to that full, 40-character SHA.
+
+Do not leave an old source revision with a newly synchronized package label. Synchronization does not verify that those values identify the same source.
+
+If the revision changes, review source-language evidence tied to the previous pin. Existing assessments can become stale.
+
+## 5. Validate and rebuild
+
+For each changed grammar, such as Python:
+
+```bash
+ts-build --config ./tree-sitter-config.yaml config validate
+ts-build --config ./tree-sitter-config.yaml list --language python --json
+ts-build --config ./tree-sitter-config.yaml build --language python
+ts-build --config ./tree-sitter-config.yaml compile --language python
+```
+
+Inspect the result before publishing. Existing grammar output requires `move --force`, which replaces its entire directory.
+
+The standalone `cmd/sync-config` remains a source-checkout utility. Normal installed CLI use does not require a separate binary or a Makefile shortcut.

@@ -13,7 +13,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const AppVersion = "1.0.0"
+const AppVersion = "1.10.0"
 const DefaultConfigPath = "tree-sitter-config.yaml"
 const configFlagDescription = "Override automatic .env development / OS user configuration selection."
 

@@ -324,16 +324,16 @@ func TestVersionCommandAndFlag(t *testing.T) {
 	if err := app.Run(context.Background(), []string{"version"}); err != nil {
 		t.Fatalf("version command returned error: %v", err)
 	}
-	if !strings.Contains(stdout.String(), "1.0.0") {
-		t.Fatalf("expected version 1.0.0, got %q", stdout.String())
+	if !strings.Contains(stdout.String(), ts.AppVersion) {
+		t.Fatalf("expected version %s, got %q", ts.AppVersion, stdout.String())
 	}
 
 	stdout.Reset()
 	if err := app.Run(context.Background(), []string{"--version"}); err != nil {
 		t.Fatalf("--version flag returned error: %v", err)
 	}
-	if !strings.Contains(stdout.String(), "1.0.0") {
-		t.Fatalf("expected version 1.0.0, got %q", stdout.String())
+	if !strings.Contains(stdout.String(), ts.AppVersion) {
+		t.Fatalf("expected version %s, got %q", ts.AppVersion, stdout.String())
 	}
 }
 

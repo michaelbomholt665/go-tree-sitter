@@ -1,111 +1,49 @@
-# Tree-sitter ABI & Runtime Compatibility
+# Parser ABI and runtime compatibility
 
-This document explains the Tree-sitter ABI (Application Binary Interface), how parser versioning works across generations, and how `go-tree-sitter` enforces compatibility.
+The parser ABI is a Tree-sitter interface version. It is not a grammar package version or a source-language version.
 
----
+A native parser contains one ABI. A runtime accepts a range of ABIs. Compatibility requires the measured parser ABI to fall within that runtime's supported range.
 
-## 1. What is the Tree-sitter ABI?
+## Generation policy versus binary measurement
 
-When `tree-sitter generate` converts a grammar's `grammar.js` into C source code (`src/parser.c`), it defines an internal numerical macro:
+The configuration distinguishes a requested generation ABI from a supported range:
 
-```c
-// parser.c
-#define LANGUAGE_VERSION 15
+```yaml
+# tree-sitter-config.yaml (excerpt)
+abi_range:
+  min: 13
+  max: 15
+generate_abi: 15
 ```
 
-When compiled, the grammar constructor `tree_sitter_<grammar>()` returns a pointer to a `TSLanguage` struct:
+The builder passes the requested ABI to `tree-sitter generate`. It checks the generated `LANGUAGE_VERSION` against policy.
 
-```c
-const TSLanguage *tree_sitter_c(void);
-```
+If generation fails, runtime policy can permit attempts with lower ABIs down to the configured minimum. An explicit per-language `generate_abi` prevents fallback.
 
-The memory layout of `TSLanguage` (its fields, state table offsets, lexical scanner callbacks, and node index widths) depends directly on `LANGUAGE_VERSION`.
+The generated macro and provenance describe source generation. Only loading a native binary and reading the language's ABI supplies the measurement used by a normal manifest.
 
-If a parser binary generated with ABI 15 is loaded by an older Tree-sitter runtime that only understands ABI 13 or 14, the runtime will read memory at incorrect struct offsets, causing invalid parse trees or segmentation faults.
+## Runtime checks
 
----
+The current Go Tree-sitter runtime supports ABI 13 through 15. Host validation rejects a binary outside the supported runtime and configured bounds.
 
-## 2. Runtime Compatibility Policy
+An incompatible ABI causes language acceptance to fail. Do not assume that an arbitrary language pointer is safe to use merely because a header names an ABI.
 
-The Go binding used by `go-tree-sitter` is [`github.com/tree-sitter/go-tree-sitter v0.25.0`](file:///home/michael/projects/go/tree-sitter/go.mod#L11).
+ABI acceptance also does not prove grammar correctness. The configured sample and available queries provide additional, bounded checks.
 
-In this binding:
-- `sitter.LANGUAGE_VERSION` = `15` (the current highest supported ABI).
-- `sitter.MIN_COMPATIBLE_LANGUAGE_VERSION` = `13` (the lowest supported legacy ABI).
+## Manifest schema v2
 
-When [`validateRuntimeABI`](file:///home/michael/projects/go/tree-sitter/internal/tree-sitter/build/validator.go#L164) tests a binary:
+Schema v2 records `parser_abi` as one measured integer. The compatibility `abi` object uses that same integer for both minimum and maximum.
 
-```go
-func validateRuntimeABI(abi, minimum, maximum uint32) error {
-    if abi < minimum || abi > maximum {
-        return fmt.Errorf("parser ABI %d is outside runtime range %d-%d", abi, minimum, maximum)
-    }
-    return nil
-}
-```
+A consumer compares the artifact's ABI with its own runtime bounds. The consumer must not treat the artifact's `abi` object as a runtime compatibility range.
 
-It ensures that any compiled parser will be fully usable by the Go runtime without undefined memory behavior.
+`tree_sitter_version` identifies the generator. The configured grammar `version` identifies an upstream package. Neither field establishes supported source-language features.
 
----
+## Foreign artifacts
 
-## 3. ABI Range Support & Flexible Code Generation
+Foreign static validation does not execute the constructor and therefore does not measure the ABI. An expected ABI in provenance remains an expectation.
 
-In older toolchains, `tree-sitter generate` chose an ABI automatically based on whatever Tree-sitter CLI version happened to be installed, or hardcoded a single ABI version that broke older grammars.
+Normal manifest generation rejects native artifacts without a measured ABI. Run validation on a compatible target host before generating downstream metadata.
 
-In `go-tree-sitter` (configuration version 2.0):
-- The supported runtime range is explicitly declared in [tree-sitter-config.yaml](file:///home/michael/projects/go/tree-sitter/tree-sitter-config.yaml):
-  ```yaml
-  abi_range:
-    min: 13
-    max: 15
-  generate_abi: 15
-  ```
-- During code generation, the builder passes the configured `generate_abi` (default: 15, or language override).
-- If a grammar's upstream syntax was designed for an earlier ABI (e.g. 14 or 13), the builder automatically falls back through the supported range (`14` then `13`).
-- The builder then scans `src/parser.c` via [`detectGeneratedABI`](file:///home/michael/projects/go/tree-sitter/internal/tree-sitter/build/builder.go#L416) to confirm the emitted `#define LANGUAGE_VERSION <n>` falls within `[13, 15]`.
-- Because ABI 15 is backward-compatible with ABI 14 and 13, any grammar generated in this range runs correctly under the Go runtime.
+Manifest-only regeneration is intentionally blocked because it cannot establish those measurements.
 
----
-
-## 4. The Shift from Schema v1 to Schema v2
-
-### The Flaw in Schema v1
-Schema v1 attempted to describe compatibility by assigning a `min_version` and `max_version` to each binary in `manifest.json`:
-
-```json
-// Flawed Schema v1 approach
-"abi": {
-  "min_version": 13,
-  "max_version": 14,
-  "parser_version": "0.20.8"
-}
-```
-
-This model was conceptually flawed:
-1. **A binary has only ONE ABI**: A compiled native library has a single, fixed struct layout determined when it was compiled (e.g., ABI 15). It does not have a "range" of ABIs.
-2. **Compatibility is a property of the consumer, not the artifact**: Whether ABI 15 can be executed is determined by the Tree-sitter C runtime linked into the consuming application, not by the binary on disk.
-3. **`parser_version` ambiguity**: In v1, this field was often populated with the upstream language package version rather than the code generator tool version.
-
-### The Schema v2 Solution
-Schema v2 redesigns metadata around measured reality:
-
-1. **`parser_abi` (Scalar uint32)**:
-   Records the exact ABI integer returned when `Language.AbiVersion()` is executed on the native binary.
-2. **`tree_sitter_version`**:
-   Records the exact version output by the `tree-sitter --version` CLI executable.
-3. **Decoupled Consumer Policy**:
-   Consumers reading `manifest.json` inspect `parser_abi` and compare it against their own runtime's supported bounds:
-   ```go
-   if manifest.ParserABI > myRuntimeMax || manifest.ParserABI < myRuntimeMin {
-       // Incompatible runtime
-   }
-   ```
-4. **Strict Compatibility Fallback**:
-   For backward compatibility with tools expecting the `abi` object, Schema v2 sets both bounds strictly equal to the measured scalar:
-   ```json
-   "abi": {
-     "min_version": 15,
-     "max_version": 15,
-     "parser_version": "0.26.8"
-   }
-   ```
+See [Manifest schema v2](../reference/manifest-schema-v2.md), [Dual-mode validation](dual-mode-validation.md), and [Language support research](../reference/VERIFY_VERSIONS.md).

@@ -1,6 +1,6 @@
 # Configuration Schema Reference (`tree-sitter-config.yaml`)
 
-This document defines the schema, data types, validation rules, and default behaviors for [tree-sitter-config.yaml](file:///home/michael/projects/go/tree-sitter/tree-sitter-config.yaml) parsed by [`LoadConfig`](file:///home/michael/projects/go/tree-sitter/internal/tree-sitter/config.go#L68).
+This document defines the schema, data types, validation rules, and default behaviors for [tree-sitter-config.yaml](../../tree-sitter-config.yaml) parsed by [`LoadConfig`](../../internal/tree-sitter/config.go#L68).
 
 ---
 
@@ -9,7 +9,7 @@ This document defines the schema, data types, validation rules, and default beha
 ```yaml
 version: "2.0"
 build_dir: "build"
-tree_sitter_cli_version: "0.26.8"
+tree_sitter_cli_version: "0.27.0"
 abi_range:
   min: 13
   max: 15
@@ -55,7 +55,7 @@ languages:
 | :--- | :--- | :--- | :--- |
 | `version` | string | **Yes** | Schema version. Must be set to `"2.0"`. |
 | `build_dir` | string | **Yes** | Path for cloned repositories and intermediate build artifacts. Defaults to `"build"`. |
-| `tree_sitter_cli_version` | string | **Yes** (in v2.0) | Exact `tree-sitter` CLI version required from `runtime.tools.tree_sitter` (e.g. `"0.26.8"`). |
+| `tree_sitter_cli_version` | string | **Yes** (in v2.0) | Exact `tree-sitter` CLI version required from `runtime.tools.tree_sitter` (e.g. `"0.27.0"`). |
 | `abi_range` | object | No | Supported ABI range for generated and runtime parsers (`min: 13, max: 15`). Defaults to `13` through `15`. |
 | `generate_abi` | integer | No | Target ABI version passed to `tree-sitter generate --abi <n>` (must fall within `abi_range`, e.g. `15`). Defaults to `15`. |
 | `build_flags` | list[string] | No | C and C++ compiler flags passed to `CFLAGS` and `CXXFLAGS` during compilation (e.g. `["-O2", "-fPIC"]`). |
@@ -99,9 +99,9 @@ languages:
   - name: "python"
     grammar: "python"
     constructor: "tree_sitter_python"
-    version: "v0.25.0"
+    version: "v0.25.1-0.20250915213335-26855eabccb1"
     repository: "https://github.com/tree-sitter/tree-sitter-python.git"
-    revision: "293fdc02038ee2bf0e2e206711b69c90ac0d413f"
+    revision: "26855eabccb19c6abf499fbc5b8dc7cc9ab8bc64"
     source_subdir: ""
     sample: "x = 1\n"
     note: "Core language"

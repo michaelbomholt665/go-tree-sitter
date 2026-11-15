@@ -1,6 +1,6 @@
 # Makefile Target Reference
 
-This document provides a reference for all targets declared in [Makefile](file:///home/michael/projects/go/tree-sitter/Makefile).
+This document provides a reference for all targets declared in [Makefile](../../Makefile).
 
 ---
 
@@ -77,7 +77,7 @@ make release CONFIG=custom-config.yaml
 | `fmt` | Formats all Go code using `go fmt ./...`. |
 | `vet` | Runs standard Go static analysis using `go vet ./...`. |
 | `lint` | Runs `golangci-lint run ./...`. |
-| `licenses` | Checks and reports open-source licenses for all third-party Go dependencies via `go-licenses`. |
+| `licenses` | Checks and reports open-source licenses for `./cmd/ts-build` dependencies only via `go-licenses`. |
 | `tool-help` | Runs `go run ./cmd/ts-build --help`. |
 | `clean` | Removes coverage reports, temporary test files, and runs `go clean`. |
 | `help` | (Default) Prints summary of available Makefile commands. |

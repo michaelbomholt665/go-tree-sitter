@@ -17,8 +17,7 @@ install-windows-tools.ps1
 /tree-sitter
 
 # Generated grammar data
-/data/tree-sitter/grammar/*
-!data/tree-sitter/grammar/.gitkeep
+/data/
 
 # Test & coverage output
 coverage.out
@@ -36,7 +35,6 @@ coverage.html
 *~
 docs/planning/
 docs/reviews/
-docs/reference/
 scripts/
 .agents/
 .pi/
