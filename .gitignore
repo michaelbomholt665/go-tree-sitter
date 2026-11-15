@@ -8,7 +8,7 @@
 *.dylib
 *.dll
 *.exe
-install-windows-tools.ps1
+/install-windows-tools.ps1
 
 # Compiled Go binaries
 /ts-build
@@ -35,7 +35,8 @@ coverage.html
 *~
 docs/planning/
 docs/reviews/
-scripts/
+/scripts/*
+!/scripts/install-windows-tools.ps1
 .agents/
 .pi/
 

@@ -27,7 +27,7 @@ $WingetPackages = @(
 
 function Show-Usage {
     @'
-Usage: powershell -ExecutionPolicy Bypass -File .\install-windows-tools.ps1 [install|uninstall|help]
+Usage: powershell -ExecutionPolicy Bypass -File .\scripts\install-windows-tools.ps1 [install|uninstall|help]
 
 Commands:
   install     Install and verify tools, clone or reuse the repository, fetch Go

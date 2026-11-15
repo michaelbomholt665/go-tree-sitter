@@ -2,7 +2,7 @@
 
 Use a Windows 11 x64 VM and PowerShell. Run **one command at a time**. This guide builds only Python for Windows amd64. Do not run `go test ./...` or select all grammars in the wizard.
 
-`install-windows-tools.ps1` installs the toolchains, fetches Go dependencies, and creates the test configuration. Separate installation commands are not required.
+`scripts/install-windows-tools.ps1` installs the toolchains, fetches Go dependencies, and creates the test configuration. Separate installation commands are not required.
 
 WARNING: Use a disposable source copy. The script installs Windows tools and updates the User PATH. Windows can request administrator approval.
 
@@ -15,7 +15,7 @@ Get the updated `install-windows-tools.ps1` from the project owner. Choose **one
 This route includes uncommitted fixes that a Git clone cannot retrieve.
 
 1. Extract the source archive into a new folder.
-2. Open PowerShell in that folder, where `go.mod` and `install-windows-tools.ps1` exist.
+2. Open PowerShell in that folder, where `go.mod` and `scripts/install-windows-tools.ps1` exist.
 3. Start recording the session.
 
    ```powershell
@@ -25,7 +25,7 @@ This route includes uncommitted fixes that a Git clone cannot retrieve.
 4. Install the tools and prepare this source copy.
 
    ```powershell
-   powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install-windows-tools.ps1 install -RepoDirectory .
+   powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-windows-tools.ps1 install -RepoDirectory .
    ```
 
    Expect numbered stages for tool installation, verification, dependency downloads, and Windows configuration. If a stage fails, stop and send its error to the owner.

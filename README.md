@@ -50,7 +50,7 @@ Install the tools required for your selected pipeline:
 
 The compiler pin describes the compiler that actually runs. Inspect `ts-build config get targets` before compiling; do not change a pin merely to suppress an unexplained mismatch.
 
-On Windows, use a native Tree-sitter executable rather than a batch wrapper. Follow [TEST-GUIDE.md](TEST-GUIDE.md); [install-windows-tools.ps1](install-windows-tools.ps1) handles tool installation, repository dependencies, and isolated test configuration.
+On Windows, use a native Tree-sitter executable rather than a batch wrapper. Follow [TEST-GUIDE.md](TEST-GUIDE.md); [scripts/install-windows-tools.ps1](scripts/install-windows-tools.ps1) handles tool installation, repository dependencies, and isolated test configuration.
 
 ---
 

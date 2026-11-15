@@ -76,7 +76,7 @@ Existing selected grammar output still requires `--force`. Replacement still req
 
 ## Windows setup and testing
 
-Use [TEST-GUIDE.md](../../TEST-GUIDE.md) and the root [PowerShell installer](../../install-windows-tools.ps1) for native Windows development setup.
+Use [TEST-GUIDE.md](../../TEST-GUIDE.md) and the [PowerShell installer](../../scripts/install-windows-tools.ps1) for native Windows development setup.
 
 The optional `-RunGrammarTest` path builds only Python for Windows amd64. It does not run the full Go suite, other grammars, or WASM tests. The script refuses an existing test catalog because Windows replacement is unsupported.
 
