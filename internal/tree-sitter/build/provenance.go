@@ -14,12 +14,13 @@ import (
 const sourceProvenanceFilename = ".source-provenance.json"
 
 type SourceProvenance struct {
-	SourceRepository string `json:"source_repository"`
-	SourceRevision   string `json:"source_revision"`
-	GeneratorVersion string `json:"generator_version"`
-	GenerateABI      *int   `json:"generate_abi"`
-	SourceDateEpoch  int64  `json:"source_date_epoch"`
-	NodeTypesSHA256  string `json:"node_types_sha256"`
+	SourceRepository string            `json:"source_repository"`
+	SourceRevision   string            `json:"source_revision"`
+	GeneratorVersion string            `json:"generator_version"`
+	GenerateABI      *int              `json:"generate_abi"`
+	SourceDateEpoch  int64             `json:"source_date_epoch"`
+	NodeTypesSHA256  string            `json:"node_types_sha256"`
+	SourceHashes     map[string]string `json:"source_hashes"`
 }
 
 type BinaryProvenance struct {
@@ -34,6 +35,7 @@ type BinaryProvenance struct {
 	Compiler         string   `json:"compiler"`
 	CompilerVersion  string   `json:"compiler_version"`
 	BuildFlags       []string `json:"build_flags"`
+	SHA256           string   `json:"sha256"`
 }
 
 func binaryProvenancePath(binaryPath string) string {

@@ -1,3 +1,5 @@
+Do not use ACP worker sub-agents. Do all coding work in the main session instead.
+
 # AI Agent Guide for `go-tree-sitter`
 
 Welcome to **go-tree-sitter**. This guide provides autonomous AI coding agents with essential context, architectural rules, command references, and actionable workflows for operating safely and effectively within this repository.
@@ -12,8 +14,18 @@ Welcome to **go-tree-sitter**. This guide provides autonomous AI coding agents w
 
 1. **Deterministic Reproducibility**: Every grammar in [`tree-sitter-config.yaml`](file:///home/michael/projects/go/tree-sitter/tree-sitter-config.yaml) **must** pin a full 40-character hexadecimal git commit SHA (`revision`). Short commits, branch names, or tags are strictly rejected.
 2. **Cryptographic Provenance**: Every artifact is stamped with `SOURCE_DATE_EPOCH` derived from the source commit timestamp. Generation tool versions, compiler flags, and AST checksums form an unbroken provenance chain.
-3. **No Unvalidated Manifests (Downstream Consumer Metadata)**: The `manifest.json` file (see [`data/tree-sitter/grammar/c-sharp/manifest.json`](file:///home/michael/projects/go/tree-sitter/data/tree-sitter/grammar/c-sharp/manifest.json)) was **not built for this app**—it was created specifically for downstream applications where the grammars will be consumed (such as the author's **graph builder** to easily control versions, target platforms, and parser ABI versions). It is generated during `build`/`move` because that is the most reliable time to measure real binary ABIs and checksums. Manifest-only regeneration without validating native binaries is forbidden ([`cmd/regen-manifests/main.go`](file:///home/michael/projects/go/tree-sitter/cmd/regen-manifests/main.go) intentionally exits with an error) because downstream consumers require metadata measured from real compiled binaries.
+3. **No Unvalidated Manifests (Downstream Consumer Metadata)**: The `manifest.json` file (see [`data/tree-sitter/grammar/csharp/manifest.json`](file:///home/michael/projects/go/tree-sitter/data/tree-sitter/grammar/csharp/manifest.json)) was **not built for this app**—it was created specifically for downstream applications where the grammars will be consumed (such as the author's **graph builder** to easily control versions, target platforms, and parser ABI versions). It is generated during `build`/`move` because that is the most reliable time to measure real binary ABIs and checksums. Manifest-only regeneration without validating native binaries is forbidden ([`cmd/regen-manifests/main.go`](file:///home/michael/projects/go/tree-sitter/cmd/regen-manifests/main.go) intentionally exits with an error) because downstream consumers require metadata measured from real compiled binaries.
 4. **Zero-Downtime Atomic Swaps**: The production catalog [`data/tree-sitter/grammar/`](file:///home/michael/projects/go/tree-sitter/data/tree-sitter/grammar/) is updated via atomic filesystem directory swaps. If validation fails on any artifact, the entire release is aborted and the production directory remains untouched.
+
+### Verifying Supported Source-Language Versions
+
+When the user asks to verify grammars' supported languages or language versions,
+**read [VERIFY_VERSIONS.md](VERIFY_VERSIONS.md) first** and follow its workflow.
+Default to **Rule 2 (documentation research)**. Use **Rule 3 (version-specific
+fixture testing) only when the user explicitly requests it**; inconclusive
+documentation is not permission to run fixtures. Rule 1 remains unknown/unverified
+without research. Do not confuse source-language support with grammar package
+versions or Tree-sitter parser ABI compatibility.
 
 ### Why Downstream Artifacts are Generated Here
 Both `manifest.json` and `compact-node-types.yaml` exist to serve external downstream consumers rather than `go-tree-sitter` itself:
@@ -135,7 +147,7 @@ go run ./cmd/ts-build move [flags]
 > [!NOTE]
 > **Role of Downstream Artifacts (`manifest.json` and `compact-node-types.yaml`):**
 > Neither of these files was built for `go-tree-sitter` itself—they were built for the downstream applications that consume these grammars (like the author's **graph builder** and AI coding agents). Generating them here during `ts-build move` is simply the easiest, most reliable point in the pipeline:
-> - **`manifest.json`** (see [`data/tree-sitter/grammar/c-sharp/manifest.json`](file:///home/michael/projects/go/tree-sitter/data/tree-sitter/grammar/c-sharp/manifest.json)): A custom manifest schema providing easy programmatic inspection and control over grammar versions, target platforms/architectures, binary checksums, and measured parser ABI versions (`parser_abi: 15`) in the graph builder. Pass `--manifest=false` when raw binaries/schemas are needed without this custom manifest metadata.
+> - **`manifest.json`** (see [`data/tree-sitter/grammar/csharp/manifest.json`](file:///home/michael/projects/go/tree-sitter/data/tree-sitter/grammar/csharp/manifest.json)): A custom manifest schema providing easy programmatic inspection and control over grammar versions, target platforms/architectures, binary checksums, and measured parser ABI versions (`parser_abi: 15`) in the graph builder. Pass `--manifest=false` when raw binaries/schemas are needed without this custom manifest metadata.
 > - **`compact-node-types.yaml`** (see [`data/tree-sitter/grammar/python/compact-node-types.yaml`](file:///home/michael/projects/go/tree-sitter/data/tree-sitter/grammar/python/compact-node-types.yaml)): Converts the raw, verbose ~100 KB `node-types.json` into an AI-friendly ~20 KB YAML file (~75–80% reduction). Downstream AI agents need AST schemas to construct queries and traversals, but raw JSON causes severe **context rot** and wastes token budget. Pass `--compact` to generate and losslessly validate it, or `--check-compact` to audit it in CI.
 
 #### 4. `compact` (Compact Node Types Tool)

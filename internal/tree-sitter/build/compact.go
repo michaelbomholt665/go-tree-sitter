@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -64,11 +65,17 @@ type CompactNode struct {
 	ChildrenOptional bool              `json:"children_optional,omitempty"`
 }
 
+// CompactNodeIdentity distinguishes named nodes from anonymous nodes with the same spelling.
+type CompactNodeIdentity struct {
+	Type  string
+	Named bool
+}
+
 // CompactParsed represents the parsed compact YAML document.
 type CompactParsed struct {
 	Tokens     []string
 	Supertypes map[string]CompactSupertype
-	Nodes      map[string]CompactNode
+	Nodes      map[CompactNodeIdentity]CompactNode
 }
 
 // CompactMetrics aggregates metrics from comparing raw node-types.json and compact YAML.
@@ -82,12 +89,114 @@ type CompactMetrics struct {
 	ReductionPct    float64
 }
 
+// rejectDuplicateJSONProperties runs before decoding objects into maps, which otherwise
+// silently replace repeated keys with the last value.
+func rejectDuplicateJSONProperties(raw []byte) error {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	var scan func() error
+	scan = func() error {
+		token, err := dec.Token()
+		if err != nil {
+			return err
+		}
+		switch token {
+		case json.Delim('{'):
+			seen := make(map[string]bool)
+			for dec.More() {
+				keyToken, err := dec.Token()
+				if err != nil {
+					return err
+				}
+				key, ok := keyToken.(string)
+				if !ok {
+					return fmt.Errorf("expected JSON object key")
+				}
+				if seen[key] {
+					return fmt.Errorf("duplicate JSON property %q", key)
+				}
+				seen[key] = true
+				if err := scan(); err != nil {
+					return err
+				}
+			}
+			_, err = dec.Token()
+		case json.Delim('['):
+			for dec.More() {
+				if err := scan(); err != nil {
+					return err
+				}
+			}
+			_, err = dec.Token()
+		}
+		return err
+	}
+	return scan()
+}
+
+// Named references use bare identifiers in compact expressions. Other spellings
+// and the reserved empty-type marker cannot be represented unambiguously.
+func compactNamedTypeSupported(name string) bool {
+	if name == "" || name == "any" {
+		return false
+	}
+	for i, c := range name {
+		if c == '_' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || i > 0 && c >= '0' && c <= '9' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
 func parseRawNodeTypesStrict(rawJSON []byte) ([]RawNodeTypeEntry, error) {
+	if err := rejectDuplicateJSONProperties(rawJSON); err != nil {
+		return nil, fmt.Errorf("parse raw node-types.json: %w", err)
+	}
 	dec := json.NewDecoder(bytes.NewReader(rawJSON))
 	dec.DisallowUnknownFields()
 	var rawData []RawNodeTypeEntry
 	if err := dec.Decode(&rawData); err != nil {
 		return nil, fmt.Errorf("parse raw node-types.json: unsupported or malformed property: %w", err)
+	}
+	if err := dec.Decode(new(any)); err != io.EOF {
+		return nil, fmt.Errorf("parse raw node-types.json: expected one JSON document")
+	}
+	seen := make(map[CompactNodeIdentity]bool, len(rawData))
+	for _, entry := range rawData {
+		id := CompactNodeIdentity{Type: entry.Type, Named: entry.Named}
+		if entry.Type == "" {
+			return nil, fmt.Errorf("parse raw node-types.json: empty declaration type")
+		}
+		if entry.Named && !compactNamedTypeSupported(entry.Type) {
+			return nil, fmt.Errorf("parse raw node-types.json: unsupported named type %q", entry.Type)
+		}
+		if seen[id] {
+			return nil, fmt.Errorf("parse raw node-types.json: duplicate declaration %q (named=%v)", entry.Type, entry.Named)
+		}
+		seen[id] = true
+		if entry.Subtypes != nil {
+			if !entry.Named || len(entry.Fields) > 0 || entry.Children != nil {
+				return nil, fmt.Errorf("parse raw node-types.json: unsupported supertype %q: requires named=true and no fields or children", entry.Type)
+			}
+		}
+		refs := append([]RawTypeChild(nil), entry.Subtypes...)
+		for name, field := range entry.Fields {
+			if name == "" || strings.HasSuffix(name, "?") {
+				return nil, fmt.Errorf("parse raw node-types.json: unsupported field name %q on %q", name, entry.Type)
+			}
+			refs = append(refs, field.Types...)
+		}
+		if entry.Children != nil {
+			refs = append(refs, entry.Children.Types...)
+		}
+		for _, ref := range refs {
+			if ref.Type == "" {
+				return nil, fmt.Errorf("parse raw node-types.json: empty type reference on %q", entry.Type)
+			}
+			if ref.Named && !compactNamedTypeSupported(ref.Type) {
+				return nil, fmt.Errorf("parse raw node-types.json: unsupported named reference %q on %q", ref.Type, entry.Type)
+			}
+		}
 	}
 	return rawData, nil
 }
@@ -505,14 +614,24 @@ func ParseCompactDoc(yamlText string) (*CompactParsed, error) {
 	doc := &CompactParsed{
 		Tokens:     make([]string, 0),
 		Supertypes: make(map[string]CompactSupertype),
-		Nodes:      make(map[string]CompactNode),
+		Nodes:      make(map[CompactNodeIdentity]CompactNode),
 	}
 
 	var currentSection string
 	var currentSupertype string
-	var currentNode string
+	var currentNode CompactNodeIdentity
 	var inFields bool
 
+	sections := make(map[string]bool)
+	declarations := make(map[CompactNodeIdentity]bool)
+	properties := make(map[string]bool)
+	recordDeclaration := func(id CompactNodeIdentity) error {
+		if declarations[id] {
+			return fmt.Errorf("duplicate declaration %q (named=%v)", id.Type, id.Named)
+		}
+		declarations[id] = true
+		return nil
+	}
 	normalized := strings.ReplaceAll(yamlText, "\r\n", "\n")
 	lines := strings.Split(normalized, "\n")
 	for lineIdx, line := range lines {
@@ -524,8 +643,14 @@ func ParseCompactDoc(yamlText string) (*CompactParsed, error) {
 		indent := len(line) - len(strings.TrimLeft(line, " "))
 
 		if indent == 0 {
+
+			section, _, _ := strings.Cut(stripped, ":")
+			if sections[section] {
+				return nil, fmt.Errorf("line %d: duplicate section %q", lineIdx+1, section)
+			}
+			sections[section] = true
 			currentSupertype = ""
-			currentNode = ""
+			currentNode = CompactNodeIdentity{}
 			inFields = false
 
 			if strings.HasPrefix(stripped, "tokens:") {
@@ -544,6 +669,10 @@ func ParseCompactDoc(yamlText string) (*CompactParsed, error) {
 								tok = item
 							}
 							doc.Tokens = append(doc.Tokens, tok)
+
+							if err := recordDeclaration(CompactNodeIdentity{Type: tok, Named: false}); err != nil {
+								return nil, fmt.Errorf("line %d: %w", lineIdx+1, err)
+							}
 						}
 					}
 				}
@@ -559,6 +688,15 @@ func ParseCompactDoc(yamlText string) (*CompactParsed, error) {
 			}
 		}
 
+		if indent >= 4 {
+			key, _, _ := strings.Cut(stripped, ":")
+			key = strings.TrimSuffix(strings.TrimSpace(key), "?")
+			path := fmt.Sprintf("%s/%s/%v/%d/%s", currentSection, currentSupertype, currentNode, indent, key)
+			if properties[path] {
+				return nil, fmt.Errorf("line %d: duplicate property %q", lineIdx+1, key)
+			}
+			properties[path] = true
+		}
 		if currentSection == "supertypes" {
 			if indent == 2 {
 				key, rest, ok := strings.Cut(stripped, ":")
@@ -566,6 +704,10 @@ func ParseCompactDoc(yamlText string) (*CompactParsed, error) {
 					return nil, fmt.Errorf("line %d: malformed supertype entry %q", lineIdx+1, stripped)
 				}
 				cleanKey := unformatYAMLKey(key)
+
+				if err := recordDeclaration(CompactNodeIdentity{Type: cleanKey, Named: true}); err != nil {
+					return nil, fmt.Errorf("line %d: %w", lineIdx+1, err)
+				}
 				val := strings.TrimSpace(rest)
 				if val == "" {
 					currentSupertype = cleanKey
@@ -607,7 +749,11 @@ func ParseCompactDoc(yamlText string) (*CompactParsed, error) {
 				if strings.HasSuffix(stripped, ": {}") {
 					rawKey := strings.TrimSpace(strings.TrimSuffix(stripped, ": {}"))
 					cleanKey := unformatYAMLKey(rawKey)
-					currentNode = cleanKey
+					currentNode = CompactNodeIdentity{Type: cleanKey, Named: !isQuotedAnonymousKey(rawKey)}
+
+					if err := recordDeclaration(currentNode); err != nil {
+						return nil, fmt.Errorf("line %d: %w", lineIdx+1, err)
+					}
 					node := CompactNode{}
 					if isQuotedAnonymousKey(rawKey) {
 						f := false
@@ -617,7 +763,11 @@ func ParseCompactDoc(yamlText string) (*CompactParsed, error) {
 				} else if strings.HasSuffix(stripped, ":") {
 					rawKey := strings.TrimSpace(strings.TrimSuffix(stripped, ":"))
 					cleanKey := unformatYAMLKey(rawKey)
-					currentNode = cleanKey
+					currentNode = CompactNodeIdentity{Type: cleanKey, Named: !isQuotedAnonymousKey(rawKey)}
+
+					if err := recordDeclaration(currentNode); err != nil {
+						return nil, fmt.Errorf("line %d: %w", lineIdx+1, err)
+					}
 					node := CompactNode{}
 					if isQuotedAnonymousKey(rawKey) {
 						f := false
@@ -627,7 +777,7 @@ func ParseCompactDoc(yamlText string) (*CompactParsed, error) {
 				} else {
 					return nil, fmt.Errorf("line %d: malformed node entry %q", lineIdx+1, stripped)
 				}
-			} else if indent == 4 && currentNode != "" {
+			} else if indent == 4 && currentNode.Type != "" {
 				node := doc.Nodes[currentNode]
 				if stripped == "fields:" {
 					inFields = true
@@ -658,9 +808,9 @@ func ParseCompactDoc(yamlText string) (*CompactParsed, error) {
 					node.Named = &f
 					doc.Nodes[currentNode] = node
 				} else {
-					return nil, fmt.Errorf("line %d: unexpected entry under node %q: %q", lineIdx+1, currentNode, stripped)
+					return nil, fmt.Errorf("line %d: unexpected entry under node %q: %q", lineIdx+1, currentNode.Type, stripped)
 				}
-			} else if indent == 6 && currentNode != "" && inFields {
+			} else if indent == 6 && currentNode.Type != "" && inFields {
 				fkey, fval, ok := strings.Cut(stripped, ":")
 				if !ok {
 					return nil, fmt.Errorf("line %d: malformed field entry %q", lineIdx+1, stripped)
@@ -693,7 +843,18 @@ func ParseCompactYAML(yamlText string) (supertypes map[string][]string, nodes ma
 	for k, st := range doc.Supertypes {
 		supertypes[k] = st.Subtypes
 	}
-	return supertypes, doc.Nodes, nil
+	nodes = make(map[string]CompactNode, len(doc.Nodes))
+	for id, node := range doc.Nodes {
+		key := id.Type
+		if !id.Named {
+			key = strconv.Quote(key)
+		}
+		if _, exists := nodes[key]; exists {
+			return nil, nil, fmt.Errorf("node identities collide in legacy string map: %q", key)
+		}
+		nodes[key] = node
+	}
+	return supertypes, nodes, nil
 }
 
 // ValidateCapture performs strict lossless validation that compact YAML preserves 100% of raw JSON AST schema.
@@ -747,22 +908,11 @@ func ValidateCapture(rawJSON []byte, yamlText string) (discrepancies []string, m
 				}
 				continue
 			}
-			// Anonymous node with metadata or fields or children
-			actNode, ok := doc.Nodes[entry.Type]
-			if !ok {
-				discrepancies = append(discrepancies, fmt.Sprintf("Anonymous node %q missing from compact YAML", entry.Type))
-				continue
-			}
-			if actNode.Root != entry.Root {
-				discrepancies = append(discrepancies, fmt.Sprintf("Node '%s' root mismatch: expected %v, got %v", entry.Type, entry.Root, actNode.Root))
-			}
-			if actNode.Extra != entry.Extra {
-				discrepancies = append(discrepancies, fmt.Sprintf("Node '%s' extra mismatch: expected %v, got %v", entry.Type, entry.Extra, actNode.Extra))
-			}
-			continue
 		}
 
-		namedTypesInJSON[entry.Type] = struct{}{}
+		if entry.Named {
+			namedTypesInJSON[entry.Type] = struct{}{}
+		}
 
 		if entry.Subtypes != nil {
 			st, ok := doc.Supertypes[entry.Type]
@@ -790,10 +940,15 @@ func ValidateCapture(rawJSON []byte, yamlText string) (discrepancies []string, m
 				discrepancies = append(discrepancies, fmt.Sprintf("Supertype '%s' subtypes mismatch: expected %v, got %v", entry.Type, expSubs, st.Subtypes))
 			}
 		} else {
-			actNode, ok := doc.Nodes[entry.Type]
+			actNode, ok := doc.Nodes[CompactNodeIdentity{Type: entry.Type, Named: entry.Named}]
 			if !ok {
 				discrepancies = append(discrepancies, fmt.Sprintf("Node '%s' missing from compact YAML", entry.Type))
 				continue
+			}
+
+			actualNamed := actNode.Named == nil || *actNode.Named
+			if actualNamed != entry.Named {
+				discrepancies = append(discrepancies, fmt.Sprintf("Node '%s' named mismatch: expected %v, got %v", entry.Type, entry.Named, actualNamed))
 			}
 			if actNode.Root != entry.Root {
 				discrepancies = append(discrepancies, fmt.Sprintf("Node '%s' root mismatch: expected %v, got %v", entry.Type, entry.Root, actNode.Root))
@@ -878,11 +1033,13 @@ func ValidateCapture(rawJSON []byte, yamlText string) (discrepancies []string, m
 			extraTypes = append(extraTypes, st)
 		}
 	}
-	for nd := range doc.Nodes {
-		if _, ok := namedTypesInJSON[nd]; !ok {
-			if _, okAnon := anonTokensInJSON[nd]; !okAnon {
-				extraTypes = append(extraTypes, nd)
+	for id := range doc.Nodes {
+		if id.Named {
+			if _, ok := namedTypesInJSON[id.Type]; !ok {
+				extraTypes = append(extraTypes, fmt.Sprintf("%s (named=true)", id.Type))
 			}
+		} else if _, ok := anonTokensInJSON[id.Type]; !ok {
+			extraTypes = append(extraTypes, fmt.Sprintf("%s (named=false)", id.Type))
 		}
 	}
 	sort.Strings(extraTypes)

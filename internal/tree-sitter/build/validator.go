@@ -107,7 +107,8 @@ func (v *NativeValidator) Validate(ctx context.Context, items []ValidationItem) 
 				validationErrors = append(validationErrors, fmt.Errorf("%s: %w", item.Language.Name, err))
 				continue
 			}
-			versions[item.BinaryPath] = abi
+			// Static checks do not measure ABI. Leave this binary out of the measured map;
+			// manifest generation rejects unmeasured foreign artifacts.
 			if err := validateRuntimeABI(abi, sitter.MIN_COMPATIBLE_LANGUAGE_VERSION, sitter.LANGUAGE_VERSION); err != nil {
 				validationErrors = append(validationErrors, fmt.Errorf("%s: %w", item.Language.Name, err))
 				continue

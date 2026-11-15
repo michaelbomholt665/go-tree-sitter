@@ -2,11 +2,28 @@ package treesitter
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/AlecAivazis/survey/v2"
 	"github.com/fatih/color"
 )
+
+func wizardPlatforms(policy RuntimeConfig) []Platform {
+	var keys []string
+	for osName, arches := range policy.SupportedTargets {
+		for _, arch := range arches {
+			keys = append(keys, osName+"/"+arch)
+		}
+	}
+	slices.Sort(keys)
+	var platforms []Platform
+	for _, key := range keys {
+		parts := strings.Split(key, "/")
+		platforms = append(platforms, Platform{OS: parts[0], Arch: parts[1]})
+	}
+	return append(platforms, Platform{OS: "wasm"})
+}
 
 // ─── Wizard result ────────────────────────────────────────────────────────────
 
@@ -63,6 +80,14 @@ func (p Platform) String() string {
 // RunWizard runs the full interactive wizard and returns the user's choices.
 // It returns (nil, false, nil) if the user aborted at the confirm step.
 func RunWizard(languages []Language) (*WizardResult, bool, error) {
+	return runWizard(languages, (*Config)(nil).EffectiveRuntime())
+}
+
+func RunWizardWithConfig(cfg *Config) (*WizardResult, bool, error) {
+	return runWizard(cfg.Languages, cfg.EffectiveRuntime())
+}
+
+func runWizard(languages []Language, policy RuntimeConfig) (*WizardResult, bool, error) {
 	header()
 
 	result := &WizardResult{}
@@ -70,10 +95,10 @@ func RunWizard(languages []Language) (*WizardResult, bool, error) {
 	if err := askPipeline(result); err != nil {
 		return nil, false, err
 	}
-	if err := askPlatforms(result); err != nil {
+	if err := askPlatforms(result, policy); err != nil {
 		return nil, false, err
 	}
-	if err := askArtifacts(result); err != nil {
+	if err := askArtifacts(result, policy); err != nil {
 		return nil, false, err
 	}
 	if err := askGrammars(result, languages); err != nil {
@@ -140,52 +165,43 @@ func askPipeline(r *WizardResult) error {
 	return nil
 }
 
-func askPlatforms(r *WizardResult) error {
-	// Platform selection is only meaningful when we will actually compile or publish.
+func askPlatforms(r *WizardResult, policy RuntimeConfig) error {
 	if r.Pipeline == PipelineBuildOnly {
-		// No binaries involved – default to host.
-		r.Platforms = []Platform{{OS: "linux", Arch: "amd64"}}
+		parts := strings.Split(HostPlatform(), "/")
+		r.Platforms = []Platform{{OS: parts[0], Arch: parts[1]}}
 		return nil
 	}
-
-	bold := color.New(color.Bold)
-	bold.Println("\nStep 2 of 4 — Target Platforms")
-
-	choices := []string{
-		"Linux amd64     Native .so shared library (current host)",
-		"macOS arm64     Apple Silicon .dylib (cross-compile via Zig/osxcross)",
-		"macOS amd64     Intel Mac .dylib (cross-compile via Zig/osxcross)",
-		"Windows amd64   .dll shared library (cross-compile via MinGW or Zig)",
-		"WebAssembly     Universal .wasm (requires emcc, docker, or podman)",
+	color.New(color.Bold).Println("\nStep 2 of 4 — Target Platforms")
+	platforms := wizardPlatforms(policy)
+	choices := make([]string, 0, len(platforms))
+	for _, p := range platforms {
+		choices = append(choices, p.String())
 	}
-
+	var defaults []string
+	for _, key := range policy.Wizard.Platforms {
+		if key == "host" {
+			key = HostPlatform()
+		}
+		if containsString(choices, key) {
+			defaults = append(defaults, key)
+		}
+	}
 	var answers []string
-	if err := survey.AskOne(&survey.MultiSelect{
-		Message: "Select one or more target platforms:",
-		Options: choices,
-		Default: []string{choices[0]}, // pre-tick Linux amd64
-	}, &answers, survey.WithValidator(survey.MinItems(1))); err != nil {
+	if err := survey.AskOne(&survey.MultiSelect{Message: "Select one or more target platforms:", Options: choices, Default: defaults}, &answers, survey.WithValidator(survey.MinItems(1))); err != nil {
 		return err
 	}
-
-	for _, a := range answers {
-		switch {
-		case strings.HasPrefix(a, "Linux amd64"):
-			r.Platforms = append(r.Platforms, Platform{OS: "linux", Arch: "amd64"})
-		case strings.HasPrefix(a, "macOS arm64"):
-			r.Platforms = append(r.Platforms, Platform{OS: "macos", Arch: "arm64"})
-		case strings.HasPrefix(a, "macOS amd64"):
-			r.Platforms = append(r.Platforms, Platform{OS: "macos", Arch: "amd64"})
-		case strings.HasPrefix(a, "Windows amd64"):
-			r.Platforms = append(r.Platforms, Platform{OS: "windows", Arch: "amd64"})
-		case strings.HasPrefix(a, "WebAssembly"):
-			r.Platforms = append(r.Platforms, Platform{OS: "wasm", Arch: ""})
+	for _, answer := range answers {
+		for _, p := range platforms {
+			if p.String() == answer {
+				r.Platforms = append(r.Platforms, p)
+				break
+			}
 		}
 	}
 	return nil
 }
 
-func askArtifacts(r *WizardResult) error {
+func askArtifacts(r *WizardResult, policy RuntimeConfig) error {
 	// Artifact selection only matters when we publish (move phase).
 	if r.Pipeline == PipelineBuildOnly || r.Pipeline == PipelineCompileOnly {
 		// Sensible defaults – nothing to publish yet.
@@ -218,11 +234,12 @@ func askArtifacts(r *WizardResult) error {
 		artifactChoices = append(artifactChoices, "WebAssembly artifact        .wasm file alongside native binaries")
 	}
 
-	defaults := []string{
-		artifactChoices[0], // manifest.json
-		artifactChoices[1], // .scm query files
+	var defaults []string
+	for i, name := range []string{"manifest", "scm", "compact", "source", "js", "wasm"} {
+		if i < len(artifactChoices) && containsString(policy.Wizard.Artifacts, name) {
+			defaults = append(defaults, artifactChoices[i])
+		}
 	}
-
 	var artifactAnswers []string
 	if err := survey.AskOne(&survey.MultiSelect{
 		Message: "Select artifacts to publish:",

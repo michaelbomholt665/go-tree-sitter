@@ -127,6 +127,19 @@ The same convention applies to `children:` vs `children?:`:
 5. **Metadata Preservation**: `root: true` and `extra: true` are checked for exact correspondence.
 6. **No Extraneous Types or Unknown Properties**: Parsing `node-types.json` rejects unknown properties. No node, field, or supertype may exist in YAML that is not defined in `node-types.json`.
 
+7. **Uniform Node Validation**: Named and anonymous structured nodes receive the same field, child, cardinality, and metadata checks. Their identities remain distinct.
+8. **Duplicate Rejection**: Repeated JSON declarations, YAML sections, declarations, properties, and field names cause an error. Required and optional spellings of the same field also conflict.
+9. **Unsupported Supertype Structure**: Supertypes must be named and must not contain nonempty fields or a children descriptor. The generator rejects these combinations instead of discarding information.
+
+Validation preserves schema semantics, not the original JSON serialization. Empty `fields: {}` objects and absent `fields` properties have the same compact representation.
+The reader uses the declaration key to identify named and anonymous nodes. An explicit `named: false` flag must agree with that identity.
+
+Input must contain exactly one JSON document. Declaration and reference type names must not be empty.
+Field names must not be empty or end with `?`, because the compact notation reserves that suffix for optional fields.
+Named type names and references must use ASCII identifier syntax (`[A-Za-z_][A-Za-z0-9_]*`).
+The name `any` is reserved for an empty type list. The generator rejects unrepresentable names instead of merging identities.
+Duplicate JSON object properties also cause an error before decoding objects into maps.
+
 ---
 
 ## 6. Comparison: JSON vs. Compact YAML

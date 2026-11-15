@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 
 	_jsii "github.com/michaelbomholt665/go-tree-sitter/internal/tree-sitter"
@@ -20,20 +21,7 @@ type target struct {
 	CompilerVersion string
 }
 
-var supportedTargets = map[string]map[string]struct{}{
-	"linux": {
-		"amd64": {},
-	},
-	"windows": {
-		"amd64": {},
-	},
-	"darwin": {
-		"amd64": {},
-		"arm64": {},
-	},
-}
-
-func resolveTarget(goos, arch string) (target, error) {
+func resolveTarget(goos, arch string, configs ...*_jsii.Config) (target, error) {
 	if goos == "" {
 		goos = runtime.GOOS
 	}
@@ -44,11 +32,15 @@ func resolveTarget(goos, arch string) (target, error) {
 	goos = normalizeGOOS(goos)
 	arch = strings.ToLower(strings.TrimSpace(arch))
 
-	arches, ok := supportedTargets[goos]
+	var cfg *_jsii.Config
+	if len(configs) > 0 {
+		cfg = configs[0]
+	}
+	arches, ok := cfg.EffectiveRuntime().SupportedTargets[platformName(goos)]
 	if !ok {
 		return target{}, fmt.Errorf("unsupported target OS %q", goos)
 	}
-	if _, ok := arches[arch]; !ok {
+	if !slices.Contains(arches, arch) {
 		return target{}, fmt.Errorf("unsupported architecture %q for target OS %q", arch, goos)
 	}
 
@@ -62,7 +54,7 @@ func resolveTarget(goos, arch string) (target, error) {
 
 func resolveConfiguredTarget(cfg *_jsii.Config, goos, arch string) (target, error) {
 	if goos != "" || arch != "" {
-		resolved, err := resolveTarget(goos, arch)
+		resolved, err := resolveTarget(goos, arch, cfg)
 		if err != nil {
 			return target{}, err
 		}
@@ -81,7 +73,7 @@ func resolveConfiguredTarget(cfg *_jsii.Config, goos, arch string) (target, erro
 	}
 
 	if cfg.OSTarget == "" {
-		return resolveTarget("", "")
+		return resolveTarget("", "", cfg)
 	}
 
 	configuredTarget, ok := cfg.Targets[cfg.OSTarget]
@@ -89,7 +81,7 @@ func resolveConfiguredTarget(cfg *_jsii.Config, goos, arch string) (target, erro
 		return target{}, fmt.Errorf("OS_TARGET %q is not defined in targets", cfg.OSTarget)
 	}
 
-	resolved, err := resolveTarget(configuredTarget.OS, configuredTarget.Arch)
+	resolved, err := resolveTarget(configuredTarget.OS, configuredTarget.Arch, cfg)
 	if err != nil {
 		return target{}, fmt.Errorf("targets[%q]: %w", cfg.OSTarget, err)
 	}
@@ -158,7 +150,7 @@ func buildRootDir(cfg *_jsii.Config, lang _jsii.Language) string {
 	if strings.TrimSpace(template) == "" {
 		return filepath.Join(cfg.BuildDir, lang.Name)
 	}
-	return renderPathTemplate(template, lang, target)
+	return renderPathTemplate(template, lang, target, cfg.BuildDir)
 }
 
 func sourceDir(cfg *_jsii.Config, lang _jsii.Language) string {
@@ -177,7 +169,7 @@ func binaryDir(cfg *_jsii.Config, lang _jsii.Language) string {
 	if strings.TrimSpace(template) == "" {
 		return filepath.Join(buildRootDir(cfg, lang), "bin")
 	}
-	return renderPathTemplate(template, lang, target)
+	return renderPathTemplate(template, lang, target, cfg.BuildDir)
 }
 
 func binaryDirForTarget(cfg *_jsii.Config, lang _jsii.Language, target target) string {
@@ -185,15 +177,16 @@ func binaryDirForTarget(cfg *_jsii.Config, lang _jsii.Language, target target) s
 	if strings.TrimSpace(template) == "" {
 		return filepath.Join(buildRootDir(cfg, lang), "bin")
 	}
-	return renderPathTemplate(template, lang, target)
+	return renderPathTemplate(template, lang, target, cfg.BuildDir)
 }
 
 func binaryFilename(lang _jsii.Language, target target) string {
 	return fmt.Sprintf("%s-%s-%s-%s%s", lang.Name, lang.Version, target.Platform, target.Arch, target.Ext)
 }
 
-func renderPathTemplate(template string, lang _jsii.Language, target target) string {
+func renderPathTemplate(template string, lang _jsii.Language, target target, buildDir string) string {
 	replacer := strings.NewReplacer(
+		"{build_dir}", buildDir,
 		"{lang}", lang.Name,
 		"{language}", lang.Name,
 		"{os}", target.Platform,

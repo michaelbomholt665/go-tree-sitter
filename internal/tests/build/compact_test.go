@@ -1,7 +1,9 @@
-package build
+// internal/tree-sitter/build/compact_test.go
+package build_test
 
 import (
 	"context"
+	build "github.com/michaelbomholt665/go-tree-sitter/internal/tree-sitter/build"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -35,7 +37,7 @@ func TestCompactNodeTypesRealFixtures(t *testing.T) {
 	root := testRepoRoot(t)
 
 	// Fixtures explicitly called out in task doc 010 plus all available grammars
-	languages := []string{"go", "python", "rust", "typescript", "c", "cpp", "c-sharp", "java", "javascript", "json", "yaml"}
+	languages := []string{"go", "python", "rust", "typescript", "c", "cpp", "csharp", "java", "javascript", "json", "yaml"}
 
 	for _, lang := range languages {
 		lang := lang
@@ -47,15 +49,15 @@ func TestCompactNodeTypesRealFixtures(t *testing.T) {
 				t.Fatalf("read node-types.json for %s: %v", lang, err)
 			}
 
-			compactYAML, err := CompactNodeTypes(rawJSON)
+			compactYAML, err := build.CompactNodeTypes(rawJSON)
 			if err != nil {
-				t.Fatalf("CompactNodeTypes failed for %s: %v", lang, err)
+				t.Fatalf("build.CompactNodeTypes failed for %s: %v", lang, err)
 			}
 
 			// Validate lossless AST preservation
-			discrepancies, metrics, err := ValidateCapture(rawJSON, string(compactYAML))
+			discrepancies, metrics, err := build.ValidateCapture(rawJSON, string(compactYAML))
 			if err != nil {
-				t.Fatalf("ValidateCapture failed for %s: %v", lang, err)
+				t.Fatalf("build.ValidateCapture failed for %s: %v", lang, err)
 			}
 			if len(discrepancies) > 0 {
 				t.Fatalf("expected 0 discrepancies for %s, got %d: %s", lang, len(discrepancies), strings.Join(discrepancies, "; "))
@@ -85,9 +87,9 @@ func TestSemanticPreservationPythonRegression(t *testing.T) {
 		t.Fatalf("read python node-types.json: %v", err)
 	}
 
-	compactYAML, err := CompactNodeTypes(rawJSON)
+	compactYAML, err := build.CompactNodeTypes(rawJSON)
 	if err != nil {
-		t.Fatalf("CompactNodeTypes: %v", err)
+		t.Fatalf("build.CompactNodeTypes: %v", err)
 	}
 	yamlStr := string(compactYAML)
 
@@ -189,9 +191,9 @@ func TestSyntheticEdgeCases(t *testing.T) {
 			}
 		]`)
 
-		compact, err := CompactNodeTypes(syntheticJSON)
+		compact, err := build.CompactNodeTypes(syntheticJSON)
 		if err != nil {
-			t.Fatalf("CompactNodeTypes: %v", err)
+			t.Fatalf("build.CompactNodeTypes: %v", err)
 		}
 		s := string(compact)
 		if !strings.Contains(s, "req_single: t1") {
@@ -210,9 +212,9 @@ func TestSyntheticEdgeCases(t *testing.T) {
 			t.Errorf("expected 'children?: [child_type]', got:\n%s", s)
 		}
 
-		discrepancies, _, err := ValidateCapture(syntheticJSON, s)
+		discrepancies, _, err := build.ValidateCapture(syntheticJSON, s)
 		if err != nil {
-			t.Fatalf("ValidateCapture: %v", err)
+			t.Fatalf("build.ValidateCapture: %v", err)
 		}
 		if len(discrepancies) > 0 {
 			t.Errorf("unexpected discrepancies: %v", discrepancies)
@@ -244,13 +246,13 @@ func TestSyntheticEdgeCases(t *testing.T) {
 			}
 		]`)
 
-		compact, err := CompactNodeTypes(sensitiveJSON)
+		compact, err := build.CompactNodeTypes(sensitiveJSON)
 		if err != nil {
-			t.Fatalf("CompactNodeTypes: %v", err)
+			t.Fatalf("build.CompactNodeTypes: %v", err)
 		}
-		discrepancies, _, err := ValidateCapture(sensitiveJSON, string(compact))
+		discrepancies, _, err := build.ValidateCapture(sensitiveJSON, string(compact))
 		if err != nil {
-			t.Fatalf("ValidateCapture: %v", err)
+			t.Fatalf("build.ValidateCapture: %v", err)
 		}
 		if len(discrepancies) > 0 {
 			t.Errorf("unexpected discrepancies for sensitive literals: %v", discrepancies)
@@ -267,7 +269,7 @@ func TestSyntheticEdgeCases(t *testing.T) {
 			}
 		]`)
 
-		_, err := CompactNodeTypes(invalidJSON)
+		_, err := build.CompactNodeTypes(invalidJSON)
 		if err == nil {
 			t.Fatalf("expected error for unsupported property, got nil")
 		}
@@ -285,7 +287,7 @@ func TestValidateCaptureDetectsDiscrepancies(t *testing.T) {
 		t.Fatalf("read python node-types.json: %v", err)
 	}
 
-	validYAML, err := CompactNodeTypes(rawJSON)
+	validYAML, err := build.CompactNodeTypes(rawJSON)
 	if err != nil {
 		t.Fatalf("generate compact YAML: %v", err)
 	}
@@ -380,9 +382,9 @@ func TestValidateCaptureDetectsDiscrepancies(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			mutated := tc.mutateYAML(string(validYAML))
-			discrepancies, _, err := ValidateCapture(rawJSON, mutated)
+			discrepancies, _, err := build.ValidateCapture(rawJSON, mutated)
 			if err != nil {
-				t.Fatalf("ValidateCapture failed with unexpected error: %v", err)
+				t.Fatalf("build.ValidateCapture failed with unexpected error: %v", err)
 			}
 			if len(discrepancies) == 0 {
 				t.Fatalf("expected discrepancy for %s, got 0", tc.name)
@@ -435,7 +437,7 @@ func TestParseCompactYAMLSyntaxErrors(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			_, _, err := ParseCompactYAML(tc.input)
+			_, _, err := build.ParseCompactYAML(tc.input)
 			if err == nil {
 				t.Fatalf("expected error for %s, got nil", tc.name)
 			}
@@ -469,7 +471,7 @@ func TestCompactorService(t *testing.T) {
 		t.Fatalf("write node-types.json: %v", err)
 	}
 
-	compactor := NewCompactor()
+	compactor := build.NewCompactor()
 
 	// 1. Check before generation should fail (file missing)
 	err = compactor.Compact(context.Background(), cfg, _jsii.CompactRequest{
@@ -528,9 +530,9 @@ func BenchmarkCompactNodeTypes(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		_, err := CompactNodeTypes(rawJSON)
+		_, err := build.CompactNodeTypes(rawJSON)
 		if err != nil {
-			b.Fatalf("CompactNodeTypes: %v", err)
+			b.Fatalf("build.CompactNodeTypes: %v", err)
 		}
 	}
 }
@@ -541,18 +543,18 @@ func BenchmarkValidateCapture(b *testing.B) {
 	if err != nil {
 		b.Fatalf("read fixture: %v", err)
 	}
-	compactYAML, err := CompactNodeTypes(rawJSON)
+	compactYAML, err := build.CompactNodeTypes(rawJSON)
 	if err != nil {
-		b.Fatalf("CompactNodeTypes: %v", err)
+		b.Fatalf("build.CompactNodeTypes: %v", err)
 	}
 	yamlStr := string(compactYAML)
 
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		_, _, err := ValidateCapture(rawJSON, yamlStr)
+		_, _, err := build.ValidateCapture(rawJSON, yamlStr)
 		if err != nil {
-			b.Fatalf("ValidateCapture: %v", err)
+			b.Fatalf("build.ValidateCapture: %v", err)
 		}
 	}
 }

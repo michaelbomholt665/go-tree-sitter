@@ -2,6 +2,9 @@ package build_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -39,11 +42,12 @@ func TestCompilerBuildsNamedBinary(t *testing.T) {
 	runner := &testutil.RecordingRunner{
 		OnRun: func(_ context.Context, cmd ts.Command) error {
 			outputPath := cmd.Args[len(cmd.Args)-1]
-			return os.WriteFile(outputPath, []byte("binary"), 0o644)
+			return writeCompilerFixture(t, outputPath)
 		},
 	}
 
 	compiler := tsbuild.NewCompiler(runner, testutil.StaticLookup{}, ioDiscard{}, ioDiscard{})
+	prepareArtifactConfig(cfg)
 	if err := compiler.Compile(context.Background(), cfg, ts.CompileRequest{Language: "python", OS: "linux", Arch: "amd64"}); err != nil {
 		t.Fatalf("Compile returned error: %v", err)
 	}
@@ -98,7 +102,7 @@ func TestCompilerUsesConfiguredOSTarget(t *testing.T) {
 	runner := &testutil.RecordingRunner{
 		OnRun: func(_ context.Context, cmd ts.Command) error {
 			outputPath := cmd.Args[len(cmd.Args)-1]
-			return os.WriteFile(outputPath, []byte("binary"), 0o644)
+			return writeCompilerFixture(t, outputPath)
 		},
 	}
 
@@ -106,6 +110,7 @@ func TestCompilerUsesConfiguredOSTarget(t *testing.T) {
 		"x86_64-w64-mingw32-gcc": "/usr/bin/x86_64-w64-mingw32-gcc",
 		"x86_64-w64-mingw32-g++": "/usr/bin/x86_64-w64-mingw32-g++",
 	}}, ioDiscard{}, ioDiscard{})
+	prepareArtifactConfig(cfg)
 	if err := compiler.Compile(context.Background(), cfg, ts.CompileRequest{Language: "python"}); err != nil {
 		t.Fatalf("Compile returned error: %v", err)
 	}
@@ -121,9 +126,46 @@ func TestCompilerUsesConfiguredOSTarget(t *testing.T) {
 
 func writeSourceProvenance(t *testing.T, dir string) {
 	t.Helper()
-	payload := []byte(`{"source_repository":"https://example.invalid/grammar","source_revision":"0123456789012345678901234567890123456789","generator_version":"0.26.8","source_date_epoch":1700000000,"node_types_sha256":"test"}`)
-	if err := os.WriteFile(filepath.Join(dir, ".source-provenance.json"), payload, 0o644); err != nil {
-		t.Fatalf("write source provenance: %v", err)
+	if err := os.MkdirAll(filepath.Join(dir, "src"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	parser := []byte("void *tree_sitter_python(void) { return 0; }\n")
+	if err := os.WriteFile(filepath.Join(dir, "src", "parser.c"), parser, 0644); err != nil {
+		t.Fatal(err)
+	}
+	hashes := map[string]string{}
+	err := filepath.WalkDir(filepath.Join(dir, "src"), func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		sum := sha256.Sum256(raw)
+		rel, err := filepath.Rel(dir, path)
+		if err != nil {
+			return err
+		}
+		hashes[filepath.ToSlash(rel)] = hex.EncodeToString(sum[:])
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := json.Marshal(tsbuild.SourceProvenance{
+		SourceRepository: "https://example.invalid/grammar", SourceRevision: reviewFixtureRevision,
+		GeneratorVersion: "0.26.8", SourceDateEpoch: 1700000000,
+		SourceHashes: hashes,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".source-provenance.json"), payload, 0644); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -147,6 +189,7 @@ func TestCompilerRequiresBuiltSource(t *testing.T) {
 	}
 
 	compiler := tsbuild.NewCompiler(&testutil.RecordingRunner{}, testutil.StaticLookup{}, ioDiscard{}, ioDiscard{})
+	prepareArtifactConfig(cfg)
 	if err := compiler.Compile(context.Background(), cfg, ts.CompileRequest{Language: "python", OS: "linux", Arch: "amd64"}); err == nil {
 		t.Fatalf("expected missing source directory to fail")
 	}
@@ -292,7 +335,7 @@ func TestCompilerCompileWithBuildWasm(t *testing.T) {
 	runner := &testutil.RecordingRunner{
 		OnRun: func(_ context.Context, cmd ts.Command) error {
 			outputPath := cmd.Args[len(cmd.Args)-1]
-			return os.WriteFile(outputPath, []byte("artifact"), 0o644)
+			return writeCompilerFixture(t, outputPath)
 		},
 	}
 
@@ -300,6 +343,7 @@ func TestCompilerCompileWithBuildWasm(t *testing.T) {
 		"emcc": "/usr/bin/emcc",
 	}}, ioDiscard{}, ioDiscard{})
 
+	prepareArtifactConfig(cfg)
 	if err := compiler.Compile(context.Background(), cfg, ts.CompileRequest{
 		Language:  "python",
 		OS:        "linux",

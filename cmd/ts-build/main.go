@@ -29,7 +29,7 @@ func main() {
 		os.Stdout,
 		os.Stderr,
 		_jsii.OSPathLookup{},
-		_jsii.LoadConfig,
+		nil, // Use automatic development/OS configuration discovery.
 		tsbuild.NewBuilderWithReporter(runner, reporter),
 		tsbuild.NewCompilerWithReporter(runner, _jsii.OSPathLookup{}, reporter),
 		tsbuild.NewMoverWithReporter(cleaner, reporter),

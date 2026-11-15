@@ -1,3 +1,4 @@
+// internal/tree-sitter/build/manifest.go
 package build
 
 import (
@@ -22,16 +23,18 @@ type RealClock struct{}
 func (RealClock) Now() time.Time { return time.Now() }
 
 type ManifestData struct {
-	SchemaVersion   int                `json:"schema_version"`
-	Grammar         string             `json:"grammar"`
-	Version         string             `json:"version"`
-	CompiledAt      string             `json:"compiled_at"`
-	TreeSitterVer   string             `json:"tree_sitter_version"`
-	ParserABI       uint32             `json:"parser_abi"`
-	Binaries        []BinaryInfo       `json:"binaries"`
-	ABI             ABIInfo            `json:"abi"`
-	Artifacts       ArtifactInfo       `json:"artifacts"`
-	BuildProvenance []BinaryProvenance `json:"build_provenance"`
+	SchemaVersion int `json:"schema_version"`
+	// Grammar is the published language name, matching its directory and binary prefix.
+	Grammar         string                   `json:"grammar"`
+	Version         string                   `json:"version"`
+	CompiledAt      string                   `json:"compiled_at"`
+	TreeSitterVer   string                   `json:"tree_sitter_version"`
+	ParserABI       uint32                   `json:"parser_abi"`
+	Binaries        []BinaryInfo             `json:"binaries"`
+	ABI             ABIInfo                  `json:"abi"`
+	Artifacts       ArtifactInfo             `json:"artifacts"`
+	BuildProvenance []BinaryProvenance       `json:"build_provenance"`
+	LanguageSupport *ManifestLanguageSupport `json:"language_support,omitempty"`
 }
 
 type BinaryInfo struct {
@@ -111,9 +114,13 @@ func GenerateManifest(lang _jsii.Language, binaryPaths []string, measuredABI map
 	}
 	sort.Slice(binaries, func(i, j int) bool { return binaries[i].Filename < binaries[j].Filename })
 	sort.Slice(buildProvenance, func(i, j int) bool { return buildProvenance[i].Filename < buildProvenance[j].Filename })
+	languageSupport, err := manifestLanguageSupport(lang.LanguageSupport, buildProvenance)
+	if err != nil {
+		return nil, err
+	}
 	return &ManifestData{
 		SchemaVersion:   ManifestSchemaVersion,
-		Grammar:         lang.Grammar,
+		Grammar:         lang.Name,
 		Version:         lang.Version,
 		CompiledAt:      time.Unix(compiledEpoch, 0).UTC().Format(time.RFC3339),
 		TreeSitterVer:   generatorVersion,
@@ -122,6 +129,7 @@ func GenerateManifest(lang _jsii.Language, binaryPaths []string, measuredABI map
 		ABI:             ABIInfo{MinVersion: parserABI, MaxVersion: parserABI, ParserVersion: generatorVersion},
 		Artifacts:       artifacts,
 		BuildProvenance: buildProvenance,
+		LanguageSupport: languageSupport,
 	}, nil
 }
 
@@ -151,6 +159,15 @@ func ValidateManifest(m *ManifestData, artifactDir string, measuredABI map[strin
 	}
 	if m.TreeSitterVer == "" || m.ABI.ParserVersion != m.TreeSitterVer {
 		validationErrors = append(validationErrors, errors.New("legacy parser_version must equal measured tree_sitter_version"))
+	}
+	// Older schema-v2 manifests omit language_support; absence means unverified.
+	if m.LanguageSupport != nil {
+		expected, err := manifestLanguageSupport(m.LanguageSupport.Assessment, m.BuildProvenance)
+		if err != nil {
+			validationErrors = append(validationErrors, err)
+		} else if m.LanguageSupport.Claim != expected.Claim || m.LanguageSupport.Reason != expected.Reason {
+			validationErrors = append(validationErrors, fmt.Errorf("language_support claim/reason must be %q/%q for the recorded assessment and binary revisions", expected.Claim, expected.Reason))
+		}
 	}
 	provenanceByFilename := make(map[string]BinaryProvenance, len(m.BuildProvenance))
 	for _, provenance := range m.BuildProvenance {

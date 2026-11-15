@@ -5,6 +5,20 @@ package grammars
 import (
 	"unsafe"
 
+	dartbinding "github.com/UserNobody14/tree-sitter-dart/bindings/go"
+	powershellbinding "github.com/airbus-cert/tree-sitter-powershell/bindings/go"
+	kotlinbinding "github.com/fwcd/tree-sitter-kotlin/bindings/go"
+	gleambinding "github.com/gleam-lang/tree-sitter-gleam/bindings/go"
+	fsharpbinding "github.com/ionide/tree-sitter-fsharp/bindings/go"
+	json5binding "github.com/joakker/tree-sitter-json5.git/bindings/go"
+	hclbinding "github.com/tree-sitter-grammars/tree-sitter-hcl/bindings/go"
+	objcbinding "github.com/tree-sitter-grammars/tree-sitter-objc/bindings/go"
+	sveltebinding "github.com/tree-sitter-grammars/tree-sitter-svelte/bindings/go"
+	swiftbinding "github.com/tree-sitter/tree-sitter-swift/bindings/go"
+	zshbinding "github.com/tree-sitter/tree-sitter-zsh/bindings/go"
+	prismabinding "github.com/victorhqc/tree-sitter-prisma/bindings/go"
+	mdxbinding "www.github.com/srazzak/tree-sitter-mdx/bindings/go"
+
 	sitter "github.com/tree-sitter/go-tree-sitter"
 
 	protobinding "github.com/coder3101/tree-sitter-proto/bindings/go"
@@ -41,6 +55,34 @@ func GetLanguage(lang string) *sitter.Language {
 	var ptr unsafe.Pointer
 
 	switch lang {
+	case "powershell":
+		ptr = powershellbinding.Language()
+	case "fsharp":
+		ptr = fsharpbinding.Language()
+	case "fsharp-signature", "fsharp_signature":
+		ptr = fsharpbinding.LanguageSignature()
+	case "kotlin":
+		ptr = kotlinbinding.Language()
+	case "swift":
+		ptr = swiftbinding.Language()
+	case "dart":
+		ptr = dartbinding.Language()
+	case "gleam":
+		ptr = gleambinding.Language()
+	case "hcl", "terraform", "terraform-vars":
+		ptr = hclbinding.Language()
+	case "zsh":
+		ptr = zshbinding.Language()
+	case "prisma":
+		ptr = prismabinding.Language()
+	case "svelte":
+		ptr = sveltebinding.Language()
+	case "objc":
+		ptr = objcbinding.Language()
+	case "json5":
+		ptr = json5binding.Language()
+	case "mdx":
+		ptr = mdxbinding.Language()
 	case "bash":
 		ptr = unsafe.Pointer(bashbinding.Language())
 	case "c":

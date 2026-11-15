@@ -51,6 +51,7 @@ func TestBuilderClonesAndGeneratesGrammarSources(t *testing.T) {
 	}
 
 	builder := tsbuild.NewBuilder(runner, ioDiscard{}, ioDiscard{})
+	prepareBuildConfig(cfg)
 	if err := builder.Build(context.Background(), cfg, ts.BuildRequest{Language: "tsx"}); err != nil {
 		t.Fatalf("Build returned error: %v", err)
 	}
@@ -71,6 +72,7 @@ func TestBuilderRejectsGeneratorVersionCopiedFromGrammarVersion(t *testing.T) {
 		}
 		return "", errors.New("unexpected output command")
 	}}
+	prepareBuildConfig(cfg)
 	err := tsbuild.NewBuilder(runner, ioDiscard{}, ioDiscard{}).Build(context.Background(), cfg, ts.BuildRequest{})
 	if err == nil || !strings.Contains(err.Error(), "configured 0.26.8, invoked 0.25.0") {
 		t.Fatalf("expected invoked generator mismatch, got %v", err)
@@ -90,6 +92,7 @@ func TestBuilderReportsEveryFailedGrammar(t *testing.T) {
 		}
 		return nil
 	}}
+	prepareBuildConfig(cfg)
 	err := tsbuild.NewBuilder(runner, ioDiscard{}, ioDiscard{}).Build(context.Background(), cfg, ts.BuildRequest{})
 	if err == nil || !strings.Contains(err.Error(), "build python") || !strings.Contains(err.Error(), "build go") {
 		t.Fatalf("expected both grammar failures, got %v", err)
@@ -131,6 +134,7 @@ func TestBuilderChecksOutExistingRepository(t *testing.T) {
 
 	runner := &testutil.RecordingRunner{}
 	builder := tsbuild.NewBuilder(runner, ioDiscard{}, ioDiscard{})
+	prepareBuildConfig(cfg)
 	if err := builder.Build(context.Background(), cfg, ts.BuildRequest{Language: "python"}); err != nil {
 		t.Fatalf("Build returned error: %v", err)
 	}
@@ -185,6 +189,7 @@ func TestBuilderInstallsNodeDependenciesWhenPackageJSONExists(t *testing.T) {
 	}
 
 	builder := tsbuild.NewBuilder(runner, ioDiscard{}, ioDiscard{})
+	prepareBuildConfig(cfg)
 	if err := builder.Build(context.Background(), cfg, ts.BuildRequest{Language: "tsx"}); err != nil {
 		t.Fatalf("Build returned error: %v", err)
 	}
@@ -233,6 +238,7 @@ func TestBuilderUsesPseudoVersionCommitForCheckout(t *testing.T) {
 	}
 
 	builder := tsbuild.NewBuilder(runner, ioDiscard{}, ioDiscard{})
+	prepareBuildConfig(cfg)
 	if err := builder.Build(context.Background(), cfg, ts.BuildRequest{Language: "proto"}); err != nil {
 		t.Fatalf("Build returned error: %v", err)
 	}
@@ -250,7 +256,7 @@ func TestBuilderUsesPseudoVersionCommitForCheckout(t *testing.T) {
 			t.Fatalf("pseudo-version clone should not use --branch: %v", got)
 		}
 	}
-	if runner.Runs[2].Args[len(runner.Runs[2].Args)-1] != "d65a18ce7c22" {
+	if runner.Runs[2].Args[len(runner.Runs[2].Args)-1] != reviewFixtureRevision {
 		t.Fatalf("expected pseudo-version checkout to use commit hash, got %v", runner.Runs[2].Args)
 	}
 }
@@ -286,6 +292,7 @@ func TestBuilderUsesPrereleasePseudoVersionCommitForCheckout(t *testing.T) {
 	}
 
 	builder := tsbuild.NewBuilder(runner, ioDiscard{}, ioDiscard{})
+	prepareBuildConfig(cfg)
 	if err := builder.Build(context.Background(), cfg, ts.BuildRequest{Language: "tsx"}); err != nil {
 		t.Fatalf("Build returned error: %v", err)
 	}
@@ -295,7 +302,7 @@ func TestBuilderUsesPrereleasePseudoVersionCommitForCheckout(t *testing.T) {
 			t.Fatalf("prerelease pseudo-version clone should not use --branch: %v", runner.Runs[0].Args)
 		}
 	}
-	if runner.Runs[2].Args[len(runner.Runs[2].Args)-1] != "75b3874edb2d" {
+	if runner.Runs[2].Args[len(runner.Runs[2].Args)-1] != reviewFixtureRevision {
 		t.Fatalf("expected prerelease pseudo-version checkout to use commit hash, got %v", runner.Runs[2].Args)
 	}
 }
@@ -367,6 +374,7 @@ func TestBuilderGeneratesWithConfiguredABIFallback(t *testing.T) {
 	}
 
 	builder := tsbuild.NewBuilder(runner, ioDiscard{}, ioDiscard{})
+	prepareBuildConfig(cfg)
 	if err := builder.Build(context.Background(), cfg, ts.BuildRequest{}); err != nil {
 		t.Fatalf("Build failed: %v", err)
 	}

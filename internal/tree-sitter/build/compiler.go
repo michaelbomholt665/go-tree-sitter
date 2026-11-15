@@ -18,6 +18,7 @@ type Compiler struct {
 	runner   _jsii.CommandRunner
 	lookup   _jsii.PathLookup
 	reporter _jsii.Reporter
+	policy   _jsii.RuntimeConfig
 }
 
 // NewCompiler constructs a Compiler.  The stdout and stderr writers are kept
@@ -49,6 +50,15 @@ func NewCompilerWithReporter(runner _jsii.CommandRunner, lookup _jsii.PathLookup
 }
 
 func (c *Compiler) Compile(ctx context.Context, cfg *_jsii.Config, req _jsii.CompileRequest) error {
+	if cfg.Output.GrammarBase != "" {
+		if err := cfg.ValidateBuildPaths(); err != nil {
+			return err
+		}
+	}
+	local := *c
+	local.policy = cfg.EffectiveRuntime()
+	local.runner = _jsii.WithToolPaths(c.runner, local.policy.Tools)
+	c = &local
 	target, err := resolveConfiguredTarget(cfg, req.OS, req.Arch)
 	if err != nil {
 		return err
@@ -61,6 +71,12 @@ func (c *Compiler) Compile(ctx context.Context, cfg *_jsii.Config, req _jsii.Com
 
 	var compileErrors []error
 	for _, lang := range languages {
+		if err := cfg.ValidateWorkspacePath(buildRootDir(cfg, lang)); err != nil {
+			return err
+		}
+		if err := cfg.ValidateWorkspacePath(binaryDirForTarget(cfg, lang, target)); err != nil {
+			return err
+		}
 		if err := c.compileLanguage(ctx, cfg, lang, target); err != nil {
 			compileErrors = append(compileErrors, fmt.Errorf("compile %s for %s/%s: %w", lang.Name, target.Platform, target.Arch, err))
 		}
@@ -108,6 +124,23 @@ func (c *Compiler) compileLanguage(ctx context.Context, cfg *_jsii.Config, lang 
 		return err
 	}
 
+	if err := verifySourceInputs(src, sourceProvenance); err != nil {
+		return err
+	}
+	if !strings.EqualFold(sourceProvenance.SourceRevision, lang.Revision) || sourceProvenance.SourceRepository != lang.Repository ||
+		strings.TrimPrefix(sourceProvenance.GeneratorVersion, "v") != strings.TrimPrefix(cfg.TreeSitterCLIVersion, "v") {
+		return fmt.Errorf("source provenance does not match selected configuration; rebuild %s", lang.Name)
+	}
+	tempDir, err := os.MkdirTemp(outDir, ".compile-*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(tempDir)
+	finalOutputPath := absoluteOutputPath
+	absoluteOutputPath, err = filepath.Abs(filepath.Join(tempDir, filepath.Base(outputPath)))
+	if err != nil {
+		return err
+	}
 	toolchainEnv, compiler, cleanup, err := c.toolchainEnv(ctx, outDir, target)
 	if err != nil {
 		c.reporter.Failure("compile", lang.Name+" ["+targetLabel+"]", err, "")
@@ -154,7 +187,7 @@ func (c *Compiler) compileLanguage(ctx context.Context, cfg *_jsii.Config, lang 
 	}
 
 	provenance := BinaryProvenance{
-		Filename:         filepath.Base(absoluteOutputPath),
+		Filename:         filepath.Base(finalOutputPath),
 		SourceRepository: sourceProvenance.SourceRepository,
 		SourceRevision:   sourceProvenance.SourceRevision,
 		GeneratorVersion: sourceProvenance.GeneratorVersion,
@@ -166,7 +199,23 @@ func (c *Compiler) compileLanguage(ctx context.Context, cfg *_jsii.Config, lang 
 		CompilerVersion:  compiler.Version,
 		BuildFlags:       append([]string(nil), cfg.BuildFlags...),
 	}
-	if err := writeJSONAtomic(binaryProvenancePath(absoluteOutputPath), &provenance); err != nil {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := verifySourceInputs(src, sourceProvenance); err != nil {
+		return err
+	}
+	if err := validateBinaryFormat(absoluteOutputPath, target.Platform, target.Arch, lang.Constructor); err != nil {
+		return err
+	}
+	provenance.SHA256, err = checksumFile(absoluteOutputPath)
+	if err != nil {
+		return err
+	}
+	if err := os.Rename(absoluteOutputPath, finalOutputPath); err != nil {
+		return err
+	}
+	if err := writeJSONAtomic(binaryProvenancePath(finalOutputPath), &provenance); err != nil {
 		err = fmt.Errorf("write binary provenance: %w", err)
 		c.reporter.Failure("compile", lang.Name+" ["+targetLabel+"]", err, "")
 		return err
@@ -211,9 +260,12 @@ func (c *Compiler) toolchainEnv(ctx context.Context, baseDir string, target targ
 		}
 	}
 
+	if !_jsii.BoolValue(c.policy.Compiler.AllowFallback, true) {
+		return nil, compilerIdentity{}, nil, fmt.Errorf("configured compiler %q is unavailable or does not match its version; compiler fallback is disabled", target.Compiler)
+	}
 	if target.GOOS == runtime.GOOS && target.Arch == runtime.GOARCH {
-		cc := "cc"
-		if found, err := c.lookup.LookPath("cc"); err == nil {
+		cc := c.policy.Compiler.HostCC
+		if found, err := c.lookup.LookPath(cc); err == nil {
 			cc = found
 		}
 		env["CC"] = cc
@@ -232,7 +284,7 @@ func (c *Compiler) toolchainEnv(ctx context.Context, baseDir string, target targ
 		}
 	}
 
-	zigPath, err := c.lookup.LookPath("zig")
+	zigPath, err := c.lookup.LookPath(c.policy.Tools.Zig)
 	if err != nil {
 		if target.Compiler != "" {
 			return nil, compilerIdentity{}, nil, fmt.Errorf("no compiler toolchain available for %s/%s; install %s, zig, or a target-specific cross-compiler", target.Platform, target.Arch, target.Compiler)
@@ -240,6 +292,9 @@ func (c *Compiler) toolchainEnv(ctx context.Context, baseDir string, target targ
 		return nil, compilerIdentity{}, nil, fmt.Errorf("no compiler toolchain available for %s/%s; install zig or a target-specific cross-compiler", target.Platform, target.Arch)
 	}
 
+	if runtime.GOOS == "windows" {
+		return nil, compilerIdentity{}, nil, fmt.Errorf("Zig shell wrappers are unsupported on Windows; configure a native target-specific compiler")
+	}
 	tempDir, err := os.MkdirTemp(baseDir, "zig-toolchain-")
 	if err != nil {
 		return nil, compilerIdentity{}, nil, fmt.Errorf("create zig toolchain wrappers: %w", err)
@@ -291,15 +346,15 @@ func (c *Compiler) measureCompiler(ctx context.Context, executable, expectedVers
 }
 
 func (c *Compiler) findCrossCompiler(target target) (string, string, bool) {
-	for _, candidate := range compilerCandidates(target) {
-		ccPath, err := c.lookup.LookPath(candidate.cc)
+	for _, candidate := range c.policy.Compiler.Candidates[target.Platform+"/"+target.Arch] {
+		ccPath, err := c.lookup.LookPath(candidate.CC)
 		if err != nil {
 			continue
 		}
 
 		cxxPath := ""
-		if candidate.cxx != "" {
-			cxxPath, err = c.lookup.LookPath(candidate.cxx)
+		if candidate.CXX != "" {
+			cxxPath, err = c.lookup.LookPath(candidate.CXX)
 			if err != nil {
 				continue
 			}
@@ -309,36 +364,6 @@ func (c *Compiler) findCrossCompiler(target target) (string, string, bool) {
 	}
 
 	return "", "", false
-}
-
-type compilerPair struct {
-	cc  string
-	cxx string
-}
-
-func compilerCandidates(target target) []compilerPair {
-	switch target.GOOS {
-	case "windows":
-		return []compilerPair{
-			{cc: "x86_64-w64-mingw32-gcc", cxx: "x86_64-w64-mingw32-g++"},
-		}
-	case "darwin":
-		if target.Arch == "arm64" {
-			return []compilerPair{
-				{cc: "oa64-clang", cxx: "oa64-clang++"},
-				{cc: "aarch64-apple-darwin-clang", cxx: "aarch64-apple-darwin-clang++"},
-			}
-		}
-		return []compilerPair{
-			{cc: "o64-clang", cxx: "o64-clang++"},
-			{cc: "x86_64-apple-darwin-clang", cxx: "x86_64-apple-darwin-clang++"},
-		}
-	default:
-		return []compilerPair{
-			{cc: "gcc", cxx: "g++"},
-			{cc: "clang", cxx: "clang++"},
-		}
-	}
 }
 
 func zigTargetTriple(target target) string {
@@ -398,6 +423,10 @@ func isDlopenError(err error) bool {
 }
 
 func (c *Compiler) CompileWasm(ctx context.Context, lang _jsii.Language, buildDir string) error {
+	local := *c
+	local.policy = (&_jsii.Config{Runtime: c.policy}).EffectiveRuntime()
+	local.runner = _jsii.WithToolPaths(c.runner, local.policy.Tools)
+	c = &local
 	start := time.Now()
 	c.reporter.Start("compile wasm", lang.Name)
 
@@ -423,33 +452,29 @@ func (c *Compiler) CompileWasm(ctx context.Context, lang _jsii.Language, buildDi
 		absOutputPath = outputPath
 	}
 
-	_, emccErr := c.lookup.LookPath("emcc")
-	_, dockerErr := c.lookup.LookPath("docker")
-	_, podmanErr := c.lookup.LookPath("podman")
-
-	if emccErr != nil && dockerErr != nil && podmanErr != nil {
-		err := errors.New("no WASM toolchain available; install emcc or a container engine (docker or podman) with emscripten/emsdk")
-		c.reporter.Failure("compile wasm", lang.Name, err, "")
-		return err
-	}
-
-	cmdEnv := make(map[string]string)
-	var cleanup func()
-	if emccErr != nil {
-		containerEngine := "docker"
-		if dockerErr != nil {
-			containerEngine = "podman"
+	backend := c.policy.WASM.Backend
+	tools := c.policy.Tools
+	var selected string
+	for _, candidate := range []struct{ name, executable string }{{"emcc", tools.EMCC}, {"docker", tools.Docker}, {"podman", tools.Podman}} {
+		if backend != "auto" && backend != candidate.name {
+			continue
 		}
-		wrapperDir, wrapperCleanup, err := c.createEmscriptenWrapper(buildDir, grammarDir, containerEngine)
+		if path, err := c.lookup.LookPath(candidate.executable); err == nil {
+			backend, selected = candidate.name, path
+			break
+		}
+	}
+	if selected == "" {
+		return fmt.Errorf("WASM backend %q is unavailable; configure runtime.tools and runtime.wasm.backend", backend)
+	}
+	cmdEnv := make(map[string]string)
+	if backend != "emcc" || tools.EMCC != "emcc" {
+		wrapperDir, cleanup, err := c.createEmscriptenWrapper(buildDir, grammarDir, backend, selected)
 		if err != nil {
-			c.reporter.Failure("compile wasm", lang.Name, err, "")
 			return err
 		}
-		cleanup = wrapperCleanup
-		cmdEnv["PATH"] = wrapperDir + string(os.PathListSeparator) + os.Getenv("PATH")
-	}
-	if cleanup != nil {
 		defer cleanup()
+		cmdEnv["PATH"] = wrapperDir + string(os.PathListSeparator) + os.Getenv("PATH")
 	}
 
 	buildErr := c.runner.Run(ctx, _jsii.Command{
@@ -490,7 +515,10 @@ func (c *Compiler) CompileWasm(ctx context.Context, lang _jsii.Language, buildDi
 	return nil
 }
 
-func (c *Compiler) createEmscriptenWrapper(baseDir, grammarDir, containerEngine string) (string, func(), error) {
+func (c *Compiler) createEmscriptenWrapper(baseDir, grammarDir, backend, executable string) (string, func(), error) {
+	if runtime.GOOS == "windows" {
+		return "", nil, fmt.Errorf("container WASM shell wrappers are unsupported on Windows; configure native emcc")
+	}
 	tempDir, err := os.MkdirTemp(baseDir, "wasm-toolchain-")
 	if err != nil {
 		return "", nil, fmt.Errorf("create wasm toolchain wrapper dir: %w", err)
@@ -500,9 +528,14 @@ func (c *Compiler) createEmscriptenWrapper(baseDir, grammarDir, containerEngine 
 		absGrammarDir = grammarDir
 	}
 	wrapperPath := filepath.Join(tempDir, "emcc")
-	content := fmt.Sprintf(`#!/usr/bin/env bash
-exec %q run --rm -v %q:%q -w %q emscripten/emsdk emcc "$@"
-`, containerEngine, absGrammarDir, absGrammarDir, absGrammarDir)
+	content := "#!/bin/sh\nexec " + shellQuote(executable) + " \"$@\"\n"
+	if backend != "emcc" {
+		absBuildDir, err := filepath.Abs(baseDir)
+		if err != nil {
+			return "", nil, err
+		}
+		content = "#!/bin/sh\nexec " + shellQuote(executable) + " run --rm -v " + shellQuote(absGrammarDir+":"+absGrammarDir) + " -v " + shellQuote(absBuildDir+":"+absBuildDir) + " -w " + shellQuote(absGrammarDir) + " " + shellQuote(c.policy.WASM.Image) + " emcc \"$@\"\n"
+	}
 	if err := os.WriteFile(wrapperPath, []byte(content), 0o755); err != nil {
 		_ = os.RemoveAll(tempDir)
 		return "", nil, fmt.Errorf("write emcc wrapper: %w", err)
@@ -511,3 +544,5 @@ exec %q run --rm -v %q:%q -w %q emscripten/emsdk emcc "$@"
 		_ = os.RemoveAll(tempDir)
 	}, nil
 }
+
+func shellQuote(value string) string { return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'" }

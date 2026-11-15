@@ -74,6 +74,306 @@ targets:
     compiler_version: "18.1.8"
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Output paths and publication settings
+# ──────────────────────────────────────────────────────────────────────────────
+
+output:
+  # Root directory where grammar artifacts (binaries, node-types.json, queries,
+  # and manifest.json) are published.  Each language gets its own sub-directory:
+  #   data/tree-sitter/grammar/<name>/
+  grammar_base: "data/tree-sitter/grammar"
+
+  # Template for the intermediate build directory (grammar source + generated files).
+  # Supported placeholders: {build_dir}, {lang}, {language}, {os}, {goos}, {arch}, {version}
+  grammar_build: "{build_dir}/{lang}/{arch}"
+
+  # Template for the compiled binary output directory.
+  grammar_compile: "{build_dir}/{lang}/{arch}"
+
+  # Always emit manifest.json alongside the published binaries.
+  generate_manifest: true
+
+  # Default file-copy mode when running `tree-sitter move`.
+  #   --json   copy binaries + node-types.json only
+  #   --scm    copy binaries + queries/ only
+  #   --both   copy binaries, node-types.json, and queries/
+  default_move_mode: "--both"
+
+  supported_move_modes:
+    - "--json"
+    - "--scm"
+    - "--both"
+
+# Runtime policy (omitted fields retain these defaults).
+# CLI flags override publication defaults, including explicit false values.
+runtime:
+    tools:
+        tree_sitter: tree-sitter
+        git: git
+        npm: npm
+        emcc: emcc
+        docker: docker
+        podman: podman
+        zig: zig
+    wasm:
+        backend: auto
+        image: emscripten/emsdk
+    compiler:
+        allow_fallback: true
+        host_cc: cc
+        candidates:
+            linux/amd64:
+                - cc: gcc
+                  cxx: g++
+                - cc: clang
+                  cxx: clang++
+            macos/amd64:
+                - cc: o64-clang
+                  cxx: o64-clang++
+                - cc: x86_64-apple-darwin-clang
+                  cxx: x86_64-apple-darwin-clang++
+            macos/arm64:
+                - cc: oa64-clang
+                  cxx: oa64-clang++
+                - cc: aarch64-apple-darwin-clang
+                  cxx: aarch64-apple-darwin-clang++
+            windows/amd64:
+                - cc: x86_64-w64-mingw32-gcc
+                  cxx: x86_64-w64-mingw32-g++
+    node:
+        install: auto
+        ci_args:
+            - ci
+            - --ignore-scripts
+        install_args:
+            - install
+            - --ignore-scripts
+            - --no-audit
+            - --no-fund
+        retry_install: true
+    generation:
+        abi_fallback: true
+    cleanup:
+        after_move: remove
+        prune:
+            directories:
+                - .git
+                - .github
+                - .vscode
+                - .idea
+                - node_modules
+                - bindings
+                - test
+                - tests
+                - corpus
+                - examples
+                - target
+                - docs
+                - doc
+                - script
+                - scripts
+                - tools
+                - benchmark
+                - benchmarks
+                - _layouts
+                - build/Release
+            files:
+                - '*.o'
+                - '*.obj'
+                - '*.a'
+                - '*.lib'
+                - '*.lock'
+                - '*.resolved'
+                - go.sum
+                - package-lock.json
+                - pnpm-lock.yaml
+                - .gitignore
+                - .gitattributes
+                - .gitmodules
+                - .editorconfig
+                - .clang-format
+                - .git-blame-ignore-revs
+                - .envrc
+                - .npmignore
+                - eslint.config.*
+                - .eslintrc*
+                - .prettierrc*
+                - .prettierignore
+                - .tsqueryrc.json
+                - README*
+                - CHANGELOG*
+                - CONTRIBUTING*
+                - SECURITY*
+                - FUNDING*
+                - ISSUE_TEMPLATE*
+                - CODE_OF_CONDUCT*
+                - package.swift
+                - binding.gyp
+                - setup.py
+                - pyproject.toml
+                - cargo.toml
+                - cmakelists.txt
+                - makefile
+                - justfile
+                - build.zig
+                - build.zig.zon
+                - gemfile
+            preserve_files:
+                - tree-sitter.json
+                - package.json
+                - go.mod
+                - LICENSE*
+                - LICENCE*
+                - NOTICE*
+                - grammar.js
+                - node-types.json
+                - .source-provenance.json
+            preserve_directories:
+                - src
+                - queries
+            protected_files:
+                - '*.o'
+                - '*.obj'
+                - '*.a'
+                - '*.lib'
+    publication:
+        manifest: true
+        compact: false
+        check_compact: false
+        source: false
+        js: false
+        wasm: false
+        force: false
+        allow_cross_validation: false
+    supported_targets:
+        linux:
+            - amd64
+        macos:
+            - amd64
+            - arm64
+        windows:
+            - amd64
+    wizard:
+        platforms:
+            - host
+        artifacts:
+            - manifest
+            - scm
+    queries:
+        paths: {}
+        rewrites:
+            - language: ocaml-interface
+              file: highlights.scm
+              find: ' (shebang)'
+              replace: ""
+    sync_modules:
+        github.com/DerekStride/tree-sitter-sql:
+            - sql
+        github.com/EmranMR/tree-sitter-blade:
+            - blade
+        github.com/JoranHonig/tree-sitter-solidity:
+            - solidity
+        github.com/UserNobody14/tree-sitter-dart:
+            - dart
+        github.com/airbus-cert/tree-sitter-powershell:
+            - powershell
+        github.com/bajrangCoder/tree-sitter-sass:
+            - sass
+        github.com/camdencheek/tree-sitter-dockerfile:
+            - dockerfile
+        github.com/camdencheek/tree-sitter-go-mod:
+            - go.mod
+        github.com/coder3101/tree-sitter-proto:
+            - proto
+        github.com/elixir-lang/tree-sitter-elixir:
+            - elixir
+        github.com/fwcd/tree-sitter-kotlin:
+            - kotlin
+        github.com/gleam-lang/tree-sitter-gleam:
+            - gleam
+        github.com/ionide/tree-sitter-fsharp:
+            - fsharp
+            - fsharp-signature
+        github.com/joakker/tree-sitter-json5.git:
+            - json5
+        github.com/pupli/tree-sitter-cypher:
+            - cypher
+        github.com/tree-sitter-grammars/tree-sitter-go-sum:
+            - go.sum
+        github.com/tree-sitter-grammars/tree-sitter-hcl:
+            - hcl
+        github.com/tree-sitter-grammars/tree-sitter-lua:
+            - lua
+        github.com/tree-sitter-grammars/tree-sitter-markdown:
+            - markdown
+            - markdown-inline
+        github.com/tree-sitter-grammars/tree-sitter-objc:
+            - objc
+        github.com/tree-sitter-grammars/tree-sitter-scss:
+            - scss
+        github.com/tree-sitter-grammars/tree-sitter-svelte:
+            - svelte
+        github.com/tree-sitter-grammars/tree-sitter-toml:
+            - toml
+        github.com/tree-sitter-grammars/tree-sitter-yaml:
+            - yaml
+        github.com/tree-sitter/tree-sitter-bash:
+            - bash
+        github.com/tree-sitter/tree-sitter-c:
+            - c
+        github.com/tree-sitter/tree-sitter-c-sharp:
+            - csharp
+        github.com/tree-sitter/tree-sitter-cpp:
+            - cpp
+        github.com/tree-sitter/tree-sitter-css:
+            - css
+        github.com/tree-sitter/tree-sitter-elixir:
+            - elixir
+        github.com/tree-sitter/tree-sitter-go:
+            - go
+        github.com/tree-sitter/tree-sitter-haskell:
+            - haskell
+        github.com/tree-sitter/tree-sitter-html:
+            - html
+        github.com/tree-sitter/tree-sitter-java:
+            - java
+        github.com/tree-sitter/tree-sitter-javascript:
+            - javascript
+        github.com/tree-sitter/tree-sitter-json:
+            - json
+        github.com/tree-sitter/tree-sitter-julia:
+            - julia
+        github.com/tree-sitter/tree-sitter-ocaml:
+            - ocaml
+            - ocaml-interface
+        github.com/tree-sitter/tree-sitter-php:
+            - php
+            - php_only
+        github.com/tree-sitter/tree-sitter-python:
+            - python
+        github.com/tree-sitter/tree-sitter-regex:
+            - regex
+        github.com/tree-sitter/tree-sitter-ruby:
+            - ruby
+        github.com/tree-sitter/tree-sitter-rust:
+            - rust
+        github.com/tree-sitter/tree-sitter-scala:
+            - scala
+        github.com/tree-sitter/tree-sitter-swift:
+            - swift
+        github.com/tree-sitter/tree-sitter-typescript:
+            - typescript
+            - tsx
+        github.com/tree-sitter/tree-sitter-zsh:
+            - zsh
+        github.com/uyha/tree-sitter-cmake:
+            - cmake
+        github.com/victorhqc/tree-sitter-prisma:
+            - prisma
+        www.github.com/srazzak/tree-sitter-mdx:
+            - mdx
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Grammar languages
 #
 # Versions here are kept in sync with go.mod via:
@@ -91,6 +391,10 @@ targets:
 #   sample       - minimal code snippet used to smoke-test the compiled parser
 # ──────────────────────────────────────────────────────────────────────────────
 
+# Optional per-language language_support assessments use their own assessed_revision.
+# Absent = unknown/unverified; dependency updates must never move assessment pins.
+# No language-version research or verification is triggered by build/compile/move.
+# See docs/reference/configuration-schema.md for evidence rules and the follow-up workflow.
 languages:
   - name: "bash"
     grammar: "bash"
@@ -98,6 +402,11 @@ languages:
     version: "v0.25.1"
     repository: "https://github.com/tree-sitter/tree-sitter-bash.git"
     revision: "a06c2e4415e9bc0346c6b86d401879ffb44058f7"
+    language_support:
+      assessed_revision: "a06c2e4415e9bc0346c6b86d401879ffb44058f7"
+      claim: unverified
+      limitations:
+        - "No explicit source-language version support claim was found in the exact-revision upstream README; support remains unknown."
     sample: "echo \"hello world\"\n"
 
   - name: "blade"
@@ -106,6 +415,11 @@ languages:
     version: "v0.12.3"
     repository: "https://github.com/EmranMR/tree-sitter-blade.git"
     revision: "cc764dadcbbceb3f259396fef66f970c72e94f96"
+    language_support:
+      assessed_revision: "cc764dadcbbceb3f259396fef66f970c72e94f96"
+      claim: unverified
+      limitations:
+        - "The README links Laravel Blade documentation but does not state supported Blade or Laravel versions."
     sample: "<div>{{ $slot }}</div>\n"
 
   - name: "c"
@@ -114,30 +428,57 @@ languages:
     version: "v0.24.2"
     repository: "https://github.com/tree-sitter/tree-sitter-c.git"
     revision: "b780e47fc780ddc8da13afa35a3f4ed5c157823d"
+    language_support:
+      assessed_revision: "b780e47fc780ddc8da13afa35a3f4ed5c157823d"
+      claim: unverified
+      limitations:
+        - "The README says this grammar was adapted from a C99 grammar, but does not state supported C standards."
     sample: "int main(void) { return 0; }\n"
 
-  - name: "c-sharp"
+  - name: "csharp"
     grammar: "c_sharp"
     constructor: "tree_sitter_c_sharp"
-    version: "v0.23.5"
+    version: "v0.23.6-0.20260929081004-8c0abe0b84a3"
     repository: "https://github.com/tree-sitter/tree-sitter-c-sharp.git"
-    revision: "cac6d5fb595f5811a076336682d5d595ac1c9e85"
+    revision: "8c0abe0b84a3681d3e6852ce2e2a1eecb4f731c5"
+    language_support:
+      assessed_revision: "8c0abe0b84a3681d3e6852ce2e2a1eecb4f731c5"
+      claim: verified
+      min_version: "1"
+      max_version: "14.0"
+      limitations:
+        - "The README excludes async, var, and await as identifiers everywhere they are valid."
+        - "The README says file-based app preprocessor directives #:property, #:package, #:sdk, and #:project are not yet recognized."
+      evidence:
+        - kind: documentation
+          source: "https://raw.githubusercontent.com/tree-sitter/tree-sitter-c-sharp/8c0abe0b84a3681d3e6852ce2e2a1eecb4f731c5/README.md"
+          description: "The README states comprehensive support for C# 1 through 14.0, subject to its listed exceptions."
     sample: "class Program { static void Main() {} }\n"
 
   - name: "cmake"
     grammar: "cmake"
     constructor: "tree_sitter_cmake"
-    version: "v0.7.5"
+    version: "v0.7.6"
     repository: "https://github.com/uyha/tree-sitter-cmake.git"
-    revision: "e997bd0b275ca525ce9befecedf5299031183661"
+    revision: "a3ec2b2144daf7132e7ee824d8cab9610523d10f"
+    language_support:
+      assessed_revision: "a3ec2b2144daf7132e7ee824d8cab9610523d10f"
+      claim: unverified
+      limitations:
+        - "No explicit source-language version support claim was found in the exact-revision upstream README; support remains unknown."
     sample: "cmake_minimum_required(VERSION 3.10)\n"
 
   - name: "cpp"
     grammar: "cpp"
     constructor: "tree_sitter_cpp"
-    version: "v0.23.4"
+    version: "v0.23.5-0.20260917200152-c00922280863"
     repository: "https://github.com/tree-sitter/tree-sitter-cpp.git"
-    revision: "f41e1a044c8a84ea9fa8577fdd2eab92ec96de02"
+    revision: "c009222808634c1014f82438d4883753516a2c24"
+    language_support:
+      assessed_revision: "c009222808634c1014f82438d4883753516a2c24"
+      claim: unverified
+      limitations:
+        - "No explicit source-language version support claim was found in the exact-revision upstream README; support remains unknown."
     sample: "#include <vector>\nint main() { std::vector<int> values; }\n"
 
   - name: "css"
@@ -146,6 +487,11 @@ languages:
     version: "v0.25.0"
     repository: "https://github.com/tree-sitter/tree-sitter-css.git"
     revision: "dda5cfc5722c429eaba1c910ca32c2c0c5bb1a3f"
+    language_support:
+      assessed_revision: "dda5cfc5722c429eaba1c910ca32c2c0c5bb1a3f"
+      claim: unverified
+      limitations:
+        - "No explicit source-language version support claim was found in the exact-revision upstream README; support remains unknown."
     sample: "a { color: red; }\n"
 
   - name: "cypher"
@@ -154,6 +500,11 @@ languages:
     version: "v0.0.2-0.20241111152014-775717a2de6c"
     repository: "https://github.com/simplificare-org/tree-sitter-cypher.git"
     revision: "775717a2de6ca76a5a75e8076b411dbc1ae4c281"
+    language_support:
+      assessed_revision: "775717a2de6ca76a5a75e8076b411dbc1ae4c281"
+      claim: unverified
+      limitations:
+        - "No explicit source-language version support claim was found in the exact-revision upstream README; support remains unknown."
     sample: "MATCH (n) RETURN n;\n"
 
   - name: "dockerfile"
@@ -162,6 +513,11 @@ languages:
     version: "v0.2.0"
     repository: "https://github.com/camdencheek/tree-sitter-dockerfile.git"
     revision: "868e44ce378deb68aac902a9db68ff82d2299dd0"
+    language_support:
+      assessed_revision: "868e44ce378deb68aac902a9db68ff82d2299dd0"
+      claim: unverified
+      limitations:
+        - "No explicit source-language version support claim was found in the exact-revision upstream README; support remains unknown."
     sample: "FROM alpine:latest\n"
 
   - name: "elixir"
@@ -170,6 +526,11 @@ languages:
     version: "v0.3.5"
     repository: "https://github.com/elixir-lang/tree-sitter-elixir.git"
     revision: "e2d9e6e0e76b0c436fa48a0b8c32a031d0cbdf49"
+    language_support:
+      assessed_revision: "e2d9e6e0e76b0c436fa48a0b8c32a031d0cbdf49"
+      claim: unverified
+      limitations:
+        - "No explicit source-language version support claim was found in the exact-revision upstream README; support remains unknown."
     sample: "IO.puts(\"hello\")\n"
 
   - name: "go"
@@ -178,14 +539,24 @@ languages:
     version: "v0.25.0"
     repository: "https://github.com/tree-sitter/tree-sitter-go.git"
     revision: "1547678a9da59885853f5f5cc8a99cc203fa2e2c"
+    language_support:
+      assessed_revision: "1547678a9da59885853f5f5cc8a99cc203fa2e2c"
+      claim: unverified
+      limitations:
+        - "No explicit source-language version support claim was found in the exact-revision upstream README; support remains unknown."
     sample: "package p\n"
 
   - name: "go.mod"
     grammar: "gomod"
     constructor: "tree_sitter_gomod"
-    version: "v1.1.0"
+    version: "v1.1.1-0.20251023052317-2e886870578e"
     repository: "https://github.com/camdencheek/tree-sitter-go-mod.git"
-    revision: "3b01edce2b9ea6766ca19328d1850e456fde3103"
+    revision: "2e886870578eeba1927a2dc4bd2e2b3f598c5f9a"
+    language_support:
+      assessed_revision: "2e886870578eeba1927a2dc4bd2e2b3f598c5f9a"
+      claim: unverified
+      limitations:
+        - "No explicit source-language version support claim was found in the exact-revision upstream README; support remains unknown."
     sample: "module example.com/x\n\ngo 1.23\n"
 
   - name: "go.sum"
@@ -194,6 +565,11 @@ languages:
     version: "v1.0.0"
     repository: "https://github.com/tree-sitter-grammars/tree-sitter-go-sum.git"
     revision: "afd6da80a9509c2edbc0f3ea540564d100babd67"
+    language_support:
+      assessed_revision: "afd6da80a9509c2edbc0f3ea540564d100babd67"
+      claim: unverified
+      limitations:
+        - "No explicit source-language version support claim was found in the exact-revision upstream README; support remains unknown."
     sample: "example.com/x v1.0.0 h1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n"
 
   - name: "haskell"
@@ -202,6 +578,11 @@ languages:
     version: "v0.24.1"
     repository: "https://github.com/tree-sitter/tree-sitter-haskell.git"
     revision: "97288e585b0bd44199720280d067fa35bacd81ff"
+    language_support:
+      assessed_revision: "97288e585b0bd44199720280d067fa35bacd81ff"
+      claim: unverified
+      limitations:
+        - "The README lists language-extension statuses but does not state supported Haskell language versions."
     sample: "main = putStrLn \"hello\"\n"
 
   - name: "html"
@@ -210,6 +591,11 @@ languages:
     version: "v0.23.2"
     repository: "https://github.com/tree-sitter/tree-sitter-html.git"
     revision: "5a5ca8551a179998360b4a4ca2c0f366a35acc03"
+    language_support:
+      assessed_revision: "5a5ca8551a179998360b4a4ca2c0f366a35acc03"
+      claim: unverified
+      limitations:
+        - "No explicit source-language version support claim was found in the exact-revision upstream README; support remains unknown."
     sample: "<div></div>\n"
 
   - name: "java"
@@ -218,6 +604,11 @@ languages:
     version: "v0.23.5"
     repository: "https://github.com/tree-sitter/tree-sitter-java.git"
     revision: "94703d5a6bed02b98e438d7cad1136c01a60ba2c"
+    language_support:
+      assessed_revision: "94703d5a6bed02b98e438d7cad1136c01a60ba2c"
+      claim: unverified
+      limitations:
+        - "No explicit source-language version support claim was found in the exact-revision upstream README; support remains unknown."
     sample: "class A {}\n"
 
   - name: "javascript"
@@ -226,14 +617,30 @@ languages:
     version: "v0.25.0"
     repository: "https://github.com/tree-sitter/tree-sitter-javascript.git"
     revision: "44c892e0be055ac465d5eeddae6d3e194424e7de"
+    language_support:
+      assessed_revision: "44c892e0be055ac465d5eeddae6d3e194424e7de"
+      claim: verified
+      max_version: "ECMAScript 2025"
+      limitations:
+        - "The README describes an intended close approximation and best-effort support for the latest specification; very new features can be unsupported."
+        - "The README cites ECMAScript 2025 and does not state a minimum version."
+      evidence:
+        - kind: documentation
+          source: "https://raw.githubusercontent.com/tree-sitter/tree-sitter-javascript/44c892e0be055ac465d5eeddae6d3e194424e7de/README.md"
+          description: "The README says the grammar intends to approximate ECMAScript and tries to support the latest specification, and references ECMAScript 2025."
     sample: "const x = 1;\n"
 
   - name: "json"
     grammar: "json"
     constructor: "tree_sitter_json"
-    version: "v0.24.8"
+    version: "v0.24.9-0.20260817103940-254c42a64764"
     repository: "https://github.com/tree-sitter/tree-sitter-json.git"
-    revision: "ee35a6ebefcef0c5c416c0d1ccec7370cfca5a24"
+    revision: "254c42a6476413b776221e03982ac8ae159eeb72"
+    language_support:
+      assessed_revision: "254c42a6476413b776221e03982ac8ae159eeb72"
+      claim: unverified
+      limitations:
+        - "No explicit source-language version support claim was found in the exact-revision upstream README; support remains unknown."
     sample: "{}\n"
 
   - name: "julia"
@@ -242,6 +649,11 @@ languages:
     version: "v0.25.0"
     repository: "https://github.com/tree-sitter/tree-sitter-julia.git"
     revision: "e0f9dcd180fdcfcfa8d79a3531e11d99e79321d3"
+    language_support:
+      assessed_revision: "e0f9dcd180fdcfcfa8d79a3531e11d99e79321d3"
+      claim: unverified
+      limitations:
+        - "No explicit source-language version support claim was found in the exact-revision upstream README; support remains unknown."
     sample: "println(\"hello\")\n"
 
   - name: "lua"
@@ -250,32 +662,56 @@ languages:
     version: "v0.5.0"
     repository: "https://github.com/tree-sitter-grammars/tree-sitter-lua.git"
     revision: "10fe0054734eec83049514ea2e718b2a56acd0c9"
+    language_support:
+      assessed_revision: "10fe0054734eec83049514ea2e718b2a56acd0c9"
+      claim: verified
+      limitations:
+        - "The README lists Lua 5.x and LuaJIT 2.x; it does not name specific minor or patch versions."
+      evidence:
+        - kind: documentation
+          source: "https://raw.githubusercontent.com/tree-sitter-grammars/tree-sitter-lua/10fe0054734eec83049514ea2e718b2a56acd0c9/README.md"
+          description: "The README lists Lua 5.x and LuaJIT 2.x as supported grammar targets."
     sample: "print(\"hello\")\n"
 
   - name: "make"
     grammar: "make"
     constructor: "tree_sitter_make"
-    version: "v1.1.1"
+    version: "v1.1.2-0.20260226090825-70613f3d812c"
     repository: "https://github.com/tree-sitter-grammars/tree-sitter-make.git"
-    revision: "5e9e8f8ff3387b0edcaa90f46ddf3629f4cfeb1d"
+    revision: "70613f3d812cbabbd7f38d104d60a409c4008b43"
+    language_support:
+      assessed_revision: "70613f3d812cbabbd7f38d104d60a409c4008b43"
+      claim: unverified
+      limitations:
+        - "No explicit source-language version support claim was found in the exact-revision upstream README; support remains unknown."
     sample: "all:\n\t@echo hello\n"
 
   # markdown and markdown-inline share the same repository; each lives in its own subdir.
   - name: "markdown"
     grammar: "markdown"
     constructor: "tree_sitter_markdown"
-    version: "v0.5.3"
+    version: "v0.5.4"
     repository: "https://github.com/tree-sitter-grammars/tree-sitter-markdown.git"
-    revision: "f969cd3ae3f9fbd4e43205431d0ae286014c05b5"
+    revision: "41ff24a6c775492c543b09228aeb98d1cd2b3a0f"
+    language_support:
+      assessed_revision: "41ff24a6c775492c543b09228aeb98d1cd2b3a0f"
+      claim: unverified
+      limitations:
+        - "The README describes CommonMark/GFM parsing but gives no Markdown-version bound."
     source_subdir: "tree-sitter-markdown"
     sample: "# Hello\n"
 
   - name: "markdown-inline"
     grammar: "markdown_inline"
     constructor: "tree_sitter_markdown_inline"
-    version: "v0.5.3"
+    version: "v0.5.4"
     repository: "https://github.com/tree-sitter-grammars/tree-sitter-markdown.git"
-    revision: "f969cd3ae3f9fbd4e43205431d0ae286014c05b5"
+    revision: "41ff24a6c775492c543b09228aeb98d1cd2b3a0f"
+    language_support:
+      assessed_revision: "41ff24a6c775492c543b09228aeb98d1cd2b3a0f"
+      claim: unverified
+      limitations:
+        - "The repository README does not establish a Markdown-version bound for the separate inline grammar."
     source_subdir: "tree-sitter-markdown-inline"
     sample: "hello *world*\n"
 
@@ -286,6 +722,11 @@ languages:
     version: "v0.26.0"
     repository: "https://github.com/tree-sitter/tree-sitter-ocaml.git"
     revision: "e3c9cf368f68bffd2f81188229aefa7b434eda65"
+    language_support:
+      assessed_revision: "e3c9cf368f68bffd2f81188229aefa7b434eda65"
+      claim: unverified
+      limitations:
+        - "No explicit source-language version support claim was found in the exact-revision upstream README; support remains unknown."
     source_subdir: "grammars/ocaml"
     sample: "let x = 1\n"
 
@@ -295,6 +736,11 @@ languages:
     version: "v0.26.0"
     repository: "https://github.com/tree-sitter/tree-sitter-ocaml.git"
     revision: "e3c9cf368f68bffd2f81188229aefa7b434eda65"
+    language_support:
+      assessed_revision: "e3c9cf368f68bffd2f81188229aefa7b434eda65"
+      claim: unverified
+      limitations:
+        - "No explicit source-language version support claim was found in the exact-revision upstream README; support remains unknown."
     source_subdir: "grammars/interface"
     sample: "val x : int\n"
 
@@ -305,6 +751,11 @@ languages:
     version: "v0.25.1"
     repository: "https://github.com/tree-sitter/tree-sitter-php.git"
     revision: "58d5643086ae60e93a3746cca648363ee97c8761"
+    language_support:
+      assessed_revision: "58d5643086ae60e93a3746cca648363ee97c8761"
+      claim: unverified
+      limitations:
+        - "No explicit source-language version support claim was found in the exact-revision upstream README; support remains unknown."
     source_subdir: "php"
     sample: "<?php echo 'hello';\n"
 
@@ -314,6 +765,11 @@ languages:
     version: "v0.25.1"
     repository: "https://github.com/tree-sitter/tree-sitter-php.git"
     revision: "58d5643086ae60e93a3746cca648363ee97c8761"
+    language_support:
+      assessed_revision: "58d5643086ae60e93a3746cca648363ee97c8761"
+      claim: unverified
+      limitations:
+        - "No explicit source-language version support claim was found in the exact-revision upstream README; support remains unknown."
     source_subdir: "php_only"
     sample: "echo 'hello';\n"
 
@@ -323,14 +779,28 @@ languages:
     version: "v0.0.0-20261007121631-d7d15427321d"
     repository: "https://github.com/coder3101/tree-sitter-proto.git"
     revision: "d7d15427321da271cb1c25c12735e180ef981473"
+    language_support:
+      assessed_revision: "d7d15427321da271cb1c25c12735e180ef981473"
+      claim: verified
+      limitations:
+        - "The README lists Proto2, Proto3, and editions support, but names no individual edition or version boundary."
+      evidence:
+        - kind: documentation
+          source: "https://raw.githubusercontent.com/coder3101/tree-sitter-proto/d7d15427321da271cb1c25c12735e180ef981473/README.md"
+          description: "The README explicitly lists support for Proto2, Proto3, and editions."
     sample: "syntax = \"proto3\"; message X {}\n"
 
   - name: "python"
     grammar: "python"
     constructor: "tree_sitter_python"
-    version: "v0.25.0"
+    version: "v0.25.1-0.20250915213335-26855eabccb1"
     repository: "https://github.com/tree-sitter/tree-sitter-python.git"
-    revision: "293fdc02038ee2bf0e2e206711b69c90ac0d413f"
+    revision: "26855eabccb19c6abf499fbc5b8dc7cc9ab8bc64"
+    language_support:
+      assessed_revision: "26855eabccb19c6abf499fbc5b8dc7cc9ab8bc64"
+      claim: unverified
+      limitations:
+        - "The README references Python 2 and Python 3 grammar documents but does not state which versions this grammar supports."
     sample: "x = 1\n"
 
   - name: "regex"
@@ -339,14 +809,24 @@ languages:
     version: "v0.25.0"
     repository: "https://github.com/tree-sitter/tree-sitter-regex.git"
     revision: "b2ac15e27fce703d2f37a79ccd94a5c0cbe9720b"
+    language_support:
+      assessed_revision: "b2ac15e27fce703d2f37a79ccd94a5c0cbe9720b"
+      claim: unverified
+      limitations:
+        - "The README names PCRE2, POSIX, and JavaScript regex syntaxes but gives no version bounds for those dialects."
     sample: "abc\n"
 
   - name: "ruby"
     grammar: "ruby"
     constructor: "tree_sitter_ruby"
-    version: "v0.23.1"
+    version: "v0.23.2-0.20260310062741-ad907a69da0c"
     repository: "https://github.com/tree-sitter/tree-sitter-ruby.git"
-    revision: "71bd32fb7607035768799732addba884a37a6210"
+    revision: "ad907a69da0c8a4f7a943a7fe012712208da6dee"
+    language_support:
+      assessed_revision: "ad907a69da0c8a4f7a943a7fe012712208da6dee"
+      claim: unverified
+      limitations:
+        - "No explicit source-language version support claim was found in the exact-revision upstream README; support remains unknown."
     sample: "puts 'hello'\n"
 
   - name: "rust"
@@ -355,6 +835,11 @@ languages:
     version: "v0.24.2"
     repository: "https://github.com/tree-sitter/tree-sitter-rust.git"
     revision: "77a3747266f4d621d0757825e6b11edcbf991ca5"
+    language_support:
+      assessed_revision: "77a3747266f4d621d0757825e6b11edcbf991ca5"
+      claim: unverified
+      limitations:
+        - "No explicit source-language version support claim was found in the exact-revision upstream README; support remains unknown."
     sample: "fn main() { let x: i32 = 1; }\n"
 
   - name: "sass"
@@ -363,14 +848,28 @@ languages:
     version: "v0.1.0"
     repository: "https://github.com/bajrangCoder/tree-sitter-sass.git"
     revision: "fb280c41b070657e4ff4d4e5e6eea6cb19efd9b8"
+    language_support:
+      assessed_revision: "fb280c41b070657e4ff4d4e5e6eea6cb19efd9b8"
+      claim: unverified
+      limitations:
+        - "No explicit source-language version support claim was found in the exact-revision upstream README; support remains unknown."
     sample: "$color: red\nbody\n  color: $color\n"
 
   - name: "scala"
     grammar: "scala"
     constructor: "tree_sitter_scala"
-    version: "v0.26.2"
+    version: "v0.26.13"
     repository: "https://github.com/tree-sitter/tree-sitter-scala.git"
-    revision: "b931fcc338390925eb893d70ad070033f5856ccf"
+    revision: "e8728b1c62ea096c753a9a70325f77ebbf2192de"
+    language_support:
+      assessed_revision: "e8728b1c62ea096c753a9a70325f77ebbf2192de"
+      claim: verified
+      limitations:
+        - "The README states coverage for Scala 2 and Scala 3 but gives no minor- or patch-version boundaries."
+      evidence:
+        - kind: documentation
+          source: "https://raw.githubusercontent.com/tree-sitter/tree-sitter-scala/e8728b1c62ea096c753a9a70325f77ebbf2192de/README.md"
+          description: "The README says the grammar covers both Scala 2 and Scala 3."
     sample: "val x = 1\n"
 
   - name: "scss"
@@ -379,6 +878,11 @@ languages:
     version: "v1.0.0"
     repository: "https://github.com/tree-sitter-grammars/tree-sitter-scss.git"
     revision: "eb69c8f55ecc17235f43358c65ec644578554f92"
+    language_support:
+      assessed_revision: "eb69c8f55ecc17235f43358c65ec644578554f92"
+      claim: unverified
+      limitations:
+        - "No explicit source-language version support claim was found in the exact-revision upstream README; support remains unknown."
     sample: "$color: red;\nbody { color: $color; }\n"
 
   - name: "solidity"
@@ -387,14 +891,24 @@ languages:
     version: "v1.2.13"
     repository: "https://github.com/JoranHonig/tree-sitter-solidity.git"
     revision: "4e938a46c7030dd001bc99e1ac0f0c750ac98254"
+    language_support:
+      assessed_revision: "4e938a46c7030dd001bc99e1ac0f0c750ac98254"
+      claim: unverified
+      limitations:
+        - "No explicit source-language version support claim was found in the exact-revision upstream README; support remains unknown."
     sample: "contract Foo { uint x; }\n"
 
   - name: "sql"
     grammar: "sql"
     constructor: "tree_sitter_sql"
-    version: "v0.3.11"
+    version: "v0.3.13"
     repository: "https://github.com/DerekStride/tree-sitter-sql.git"
-    revision: "1156b55f26a5949784827f21c6abc72c05e26600"
+    revision: "4cd7224bfcf1fee23227c4d626760341c9b26772"
+    language_support:
+      assessed_revision: "4cd7224bfcf1fee23227c4d626760341c9b26772"
+      claim: unverified
+      limitations:
+        - "No explicit source-language version support claim was found in the exact-revision upstream README; support remains unknown."
     sample: "SELECT 1;\n"
 
   - name: "toml"
@@ -403,6 +917,11 @@ languages:
     version: "v0.7.0"
     repository: "https://github.com/tree-sitter-grammars/tree-sitter-toml.git"
     revision: "64b56832c2cffe41758f28e05c756a3a98d16f41"
+    language_support:
+      assessed_revision: "64b56832c2cffe41758f28e05c756a3a98d16f41"
+      claim: unverified
+      limitations:
+        - "The README links TOML v1.0.0 as a reference but does not explicitly claim support for that version."
     sample: "x = 1\n"
 
   # typescript and tsx share the same repository; each lives in its own subdir.
@@ -412,6 +931,11 @@ languages:
     version: "v0.23.3-0.20250130221139-75b3874edb2d"
     repository: "https://github.com/tree-sitter/tree-sitter-typescript.git"
     revision: "75b3874edb2dc714fb1fd77a32013d0f8699989f"
+    language_support:
+      assessed_revision: "75b3874edb2dc714fb1fd77a32013d0f8699989f"
+      claim: unverified
+      limitations:
+        - "The README distinguishes TSX from TypeScript but does not state a supported TypeScript/TSX version range."
     source_subdir: "tsx"
     sample: "const x = <div />;\n"
 
@@ -421,52 +945,446 @@ languages:
     version: "v0.23.3-0.20250130221139-75b3874edb2d"
     repository: "https://github.com/tree-sitter/tree-sitter-typescript.git"
     revision: "75b3874edb2dc714fb1fd77a32013d0f8699989f"
+    language_support:
+      assessed_revision: "75b3874edb2dc714fb1fd77a32013d0f8699989f"
+      claim: unverified
+      min_version: "5.9.2"
+      limitations:
+        - "The README distinguishes TypeScript from TSX but does not state a supported TypeScript version range."
+        - "Tentative user-reported estimate, not established by pinned upstream documentation; TypeScript 6+ support is unknown. The v0.23.3 grammar package version does not establish a TypeScript compiler-version boundary."
     source_subdir: "typescript"
     sample: "const x: number = 1;\n"
 
   - name: "yaml"
     grammar: "yaml"
     constructor: "tree_sitter_yaml"
-    version: "v0.7.2"
+    version: "v0.7.3-0.20260522055615-a1c4812a73ec"
     repository: "https://github.com/tree-sitter-grammars/tree-sitter-yaml.git"
-    revision: "7708026449bed86239b1cd5bce6e3c34dbca6415"
+    revision: "a1c4812a73ec5e089de8e441fdea3a921e8d5079"
+    language_support:
+      assessed_revision: "a1c4812a73ec5e089de8e441fdea3a921e8d5079"
+      claim: unverified
+      limitations:
+        - "The README links YAML 1.2 as a reference but does not explicitly claim support for that version."
     sample: "x: 1\n"
 
   - name: "zig"
     grammar: "zig"
     constructor: "tree_sitter_zig"
-    version: "v1.1.2"
+    version: "v1.1.3-0.20250910133711-6479aa13f32f"
     repository: "https://github.com/tree-sitter-grammars/tree-sitter-zig.git"
-    revision: "b670c8df85a1568f498aa5c8cae42f51a90473c0"
+    revision: "6479aa13f32f701c383083d8b28360ebd682fb7d"
+    language_support:
+      assessed_revision: "6479aa13f32f701c383083d8b28360ebd682fb7d"
+      claim: unverified
+      limitations:
+        - "No explicit source-language version support claim was found in the exact-revision upstream README; support remains unknown."
     sample: "pub fn main() void {}\n"
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Output paths and publication settings
-# ──────────────────────────────────────────────────────────────────────────────
+  - name: "powershell"
+    grammar: "powershell"
+    constructor: "tree_sitter_powershell"
+    version: "v0.26.6"
+    repository: "https://github.com/airbus-cert/tree-sitter-powershell.git"
+    revision: "65ea6919e816a7ac142acec7ee72757f89db8439"
+    language_support:
+      assessed_revision: "65ea6919e816a7ac142acec7ee72757f89db8439"
+      claim: unverified
+      limitations:
+        - "The pinned README references a PowerShell 7.3 specification page, but does not claim support for 7.3 or a version range; support remains unverified."
+      evidence:
+        - kind: documentation
+          source: "https://github.com/airbus-cert/tree-sitter-powershell/blob/65ea6919e816a7ac142acec7ee72757f89db8439/README.md"
+          description: "The References section links a PowerShell 7.3 language-specification page; a reference alone does not establish grammar compatibility."
+    sample: "Write-Output \"hello\"\n"
 
-output:
-  # Root directory where grammar artifacts (binaries, node-types.json, queries,
-  # and manifest.json) are published.  Each language gets its own sub-directory:
-  #   data/tree-sitter/grammar/<name>/
-  grammar_base: "data/tree-sitter/grammar"
+  - name: "fsharp"
+    grammar: "fsharp"
+    constructor: "tree_sitter_fsharp"
+    version: "v0.2.1-0.20260912141928-aefd0c8741bd"
+    repository: "https://github.com/ionide/tree-sitter-fsharp.git"
+    revision: "aefd0c8741bdf3aeb827a228aa4a996a6536697e"
+    source_subdir: "fsharp"
+    language_support:
+      assessed_revision: "aefd0c8741bdf3aeb827a228aa4a996a6536697e"
+      claim: unverified
+      limitations:
+        - "The README cites the F# 4.1 specification as a basis, not a supported-version range; version support remains unverified."
+      evidence:
+        - kind: documentation
+          source: "https://github.com/ionide/tree-sitter-fsharp/blob/aefd0c8741bdf3aeb827a228aa4a996a6536697e/README.md"
+          description: "Upstream says the grammar is based on the F# 4.1 specification (mostly Appendix A); this is not a conformance or version-support claim."
+    sample: "let answer = 42\n"
 
-  # Template for the intermediate build directory (grammar source + generated files).
-  # Supported placeholders: {lang}, {language}, {os}, {goos}, {arch}, {version}
-  grammar_build: "build/{lang}/{arch}"
+  - name: "fsharp-signature"
+    grammar: "fsharp_signature"
+    constructor: "tree_sitter_fsharp_signature"
+    version: "v0.2.1-0.20260912141928-aefd0c8741bd"
+    repository: "https://github.com/ionide/tree-sitter-fsharp.git"
+    revision: "aefd0c8741bdf3aeb827a228aa4a996a6536697e"
+    source_subdir: "fsharp_signature"
+    language_support:
+      assessed_revision: "aefd0c8741bdf3aeb827a228aa4a996a6536697e"
+      claim: unverified
+      limitations:
+        - "The README cites the F# 4.1 specification as a basis, not a supported-version range; version support remains unverified."
+      evidence:
+        - kind: documentation
+          source: "https://github.com/ionide/tree-sitter-fsharp/blob/aefd0c8741bdf3aeb827a228aa4a996a6536697e/README.md"
+          description: "Upstream says the grammar is based on the F# 4.1 specification (mostly Appendix A); this is not a conformance or version-support claim."
+    sample: "module Example\nval answer: int\n"
 
-  # Template for the compiled binary output directory.
-  grammar_compile: "build/{lang}/{arch}"
+  - name: "kotlin"
+    grammar: "kotlin"
+    constructor: "tree_sitter_kotlin"
+    version: "v0.0.0-20261031170920-d6af96d2e23e"
+    repository: "https://github.com/fwcd/tree-sitter-kotlin.git"
+    revision: "d6af96d2e23ef0a8ff5ab512864378cf08fba311"
+    language_support:
+      assessed_revision: "d6af96d2e23ef0a8ff5ab512864378cf08fba311"
+      claim: unverified
+      limitations:
+        - "The same-revision fixture report instead records 436 compared fixtures, 417 structural tests, 19 expected failures, and 11 exclusions. This disagrees with the README; no Rule 3 verification was performed."
+        - "Upstream documents a Kotlin 2.4.21 fixture target, not complete language-version support. No supported-version bounds are established."
+      evidence:
+        - kind: documentation
+          source: "https://github.com/fwcd/tree-sitter-kotlin/blob/d6af96d2e23ef0a8ff5ab512864378cf08fba311/README.md"
+          description: "The pinned README identifies Kotlin 2.4.21 fixtures at JetBrains commit 9180ce6a7a7d3627f88b424717583f28ddca052d: 438 eligible inputs, 399 structural expectations, 39 expected parser failures, and nine exclusions."
+        - kind: documentation
+          source: "https://github.com/fwcd/tree-sitter-kotlin/blob/d6af96d2e23ef0a8ff5ab512864378cf08fba311/test/jetbrains-fixtures.json"
+          description: "Archived report documents incomplete fixture coverage and disagrees with README counts: 436 compared, 417 structural tests, 19 expected failures, 11 exclusions. This assessment does not record a syntax_fixtures result."
+        - kind: documentation
+          source: "https://github.com/fwcd/tree-sitter-kotlin/blob/d6af96d2e23ef0a8ff5ab512864378cf08fba311/tools/README.md"
+          description: "The tooling documentation repeats Kotlin 2.4.21 and the nine-exclusion import policy. These are upstream documentary claims, not a locally executed fixture result."
+    sample: "fun main() { println(\"hello\") }\n"
 
-  # Always emit manifest.json alongside the published binaries.
-  generate_manifest: true
+  - name: "groovy"
+    note: "Native-only: upstream has a nested Go module with a mismatched module path; no importable root binding at this revision."
+    grammar: "groovy"
+    constructor: "tree_sitter_groovy"
+    version: "v0.0.0-20260927220505-2a6ddd558b6a"
+    repository: "https://github.com/murtaza64/tree-sitter-groovy.git"
+    revision: "2a6ddd558b6aa39c5b77d8db9fe9baf817486b2c"
+    language_support:
+      assessed_revision: "2a6ddd558b6aa39c5b77d8db9fe9baf817486b2c"
+      claim: unverified
+      limitations:
+        - "No explicit source-language version support claim was found in the pinned upstream README; version support remains unverified."
+      evidence:
+        - kind: documentation
+          source: "https://github.com/murtaza64/tree-sitter-groovy/blob/2a6ddd558b6aa39c5b77d8db9fe9baf817486b2c/README.md"
+          description: "The README identifies the grammar but does not establish supported source-language versions."
+    sample: "def answer = 42\n"
 
-  # Default file-copy mode when running `tree-sitter move`.
-  #   --json   copy binaries + node-types.json only
-  #   --scm    copy binaries + queries/ only
-  #   --both   copy binaries, node-types.json, and queries/
-  default_move_mode: "--both"
+  - name: "lean"
+    grammar: "lean"
+    constructor: "tree_sitter_lean"
+    version: "v0.2.0"
+    repository: "https://github.com/Julian/tree-sitter-lean.git"
+    revision: "0d28e5d6e8c4755f5df7ef9bde3b6ec6f59fae94"
+    note: "Native-only: this upstream revision does not provide Go bindings."
+    language_support:
+      assessed_revision: "0d28e5d6e8c4755f5df7ef9bde3b6ec6f59fae94"
+      claim: verified
+      limitations:
+        - "Static Lean 4 editor syntax only: user-defined syntax uses, custom precedence suffixes, full Mathlib tactics, and multi-name structure fields are excluded; no version range is established."
+      evidence:
+        - kind: documentation
+          source: "https://github.com/Julian/tree-sitter-lean/blob/0d28e5d6e8c4755f5df7ef9bde3b6ec6f59fae94/README.md"
+          description: "Upstream explicitly targets limited static Lean 4 syntax for editor tooling and lists unsupported dynamic syntax and tactics."
+    sample: "def answer : Nat := 42\n"
 
-  supported_move_modes:
-    - "--json"
-    - "--scm"
-    - "--both"
+  - name: "swift"
+    grammar: "swift"
+    constructor: "tree_sitter_swift"
+    version: "v0.0.0-20261004031734-82bb3a533e08"
+    repository: "https://github.com/alex-pinkus/tree-sitter-swift.git"
+    revision: "82bb3a533e0801fd2bbaa11dc49676e10bf41948"
+    language_support:
+      assessed_revision: "82bb3a533e0801fd2bbaa11dc49676e10bf41948"
+      claim: unverified
+      limitations:
+        - "No explicit source-language version support claim was found in the pinned upstream README; version support remains unverified."
+      evidence:
+        - kind: documentation
+          source: "https://github.com/alex-pinkus/tree-sitter-swift/blob/82bb3a533e0801fd2bbaa11dc49676e10bf41948/README.md"
+          description: "The README identifies the grammar but does not establish supported source-language versions."
+    sample: "let answer = 42\n"
+
+  - name: "dart"
+    grammar: "dart"
+    constructor: "tree_sitter_dart"
+    version: "v0.0.0-20261018035034-0038280b774b"
+    repository: "https://github.com/UserNobody14/tree-sitter-dart.git"
+    revision: "0038280b774b65c1b89ba7fec50624d8baed9fe1"
+    language_support:
+      assessed_revision: "0038280b774b65c1b89ba7fec50624d8baed9fe1"
+      claim: unverified
+      limitations:
+        - "No explicit source-language version support claim was found in the pinned upstream README; version support remains unverified."
+      evidence:
+        - kind: documentation
+          source: "https://github.com/UserNobody14/tree-sitter-dart/blob/0038280b774b65c1b89ba7fec50624d8baed9fe1/README.md"
+          description: "The README identifies the grammar but does not establish supported source-language versions."
+    sample: "void main() { print('hello'); }\n"
+
+  - name: "gleam"
+    grammar: "gleam"
+    constructor: "tree_sitter_gleam"
+    version: "v1.1.1-0.20260918091344-fa6d0d94804f"
+    repository: "https://github.com/gleam-lang/tree-sitter-gleam.git"
+    revision: "fa6d0d94804f1b342e175865a3dbeb316ee5115e"
+    language_support:
+      assessed_revision: "fa6d0d94804f1b342e175865a3dbeb316ee5115e"
+      claim: unverified
+      limitations:
+        - "No explicit source-language version support claim was found in the pinned upstream README; version support remains unverified."
+      evidence:
+        - kind: documentation
+          source: "https://github.com/gleam-lang/tree-sitter-gleam/blob/fa6d0d94804f1b342e175865a3dbeb316ee5115e/README.md"
+          description: "The README identifies the grammar but does not establish supported source-language versions."
+    sample: "pub fn main() { 42 }\n"
+
+  - name: "typst"
+    note: "Native-only: upstream has a nested Go module with a mismatched module path; no importable root binding at this revision."
+    grammar: "typst"
+    constructor: "tree_sitter_typst"
+    version: "v0.11.1-0.20250210143020-46cf4ded12ee"
+    repository: "https://github.com/uben0/tree-sitter-typst.git"
+    revision: "46cf4ded12ee974a70bf8457263b67ad7ee0379d"
+    language_support:
+      assessed_revision: "46cf4ded12ee974a70bf8457263b67ad7ee0379d"
+      claim: unverified
+      limitations:
+        - "No explicit source-language version support claim was found in the pinned upstream README; version support remains unverified."
+      evidence:
+        - kind: documentation
+          source: "https://github.com/uben0/tree-sitter-typst/blob/46cf4ded12ee974a70bf8457263b67ad7ee0379d/README.md"
+          description: "The README identifies the grammar but does not establish supported source-language versions."
+    sample: "= Hello\n#let answer = 42\n"
+
+  - name: "clojure"
+    grammar: "clojure"
+    constructor: "tree_sitter_clojure"
+    version: "v0.0.13"
+    repository: "https://github.com/sogaiu/tree-sitter-clojure.git"
+    revision: "e43eff80d17cf34852dcd92ca5e6986d23a7040f"
+    note: "Native-only: this upstream revision does not provide Go bindings."
+    language_support:
+      assessed_revision: "e43eff80d17cf34852dcd92ca5e6986d23a7040f"
+      claim: unverified
+      limitations:
+        - "The pinned README targets Clojure and ClojureScript but specifies no supported language versions. The scope document excludes complete defining-macro recognition and states that Clojure has no language specification."
+      evidence:
+        - kind: documentation
+          source: "https://github.com/sogaiu/tree-sitter-clojure/blob/e43eff80d17cf34852dcd92ca5e6986d23a7040f/README.md"
+          description: "The README identifies Clojure and ClojureScript as targets, but does not establish supported source-language versions."
+        - kind: documentation
+          source: "https://github.com/sogaiu/tree-sitter-clojure/blob/e43eff80d17cf34852dcd92ca5e6986d23a7040f/doc/scope.md"
+          description: "The scope document states that Clojure has no language specification and lists recognition of all defining macros as a limitation; it gives no supported language-version range."
+    sample: "(def answer 42)\n"
+
+  - name: "cue"
+    grammar: "cue"
+    constructor: "tree_sitter_cue"
+    version: "v0.2.0"
+    repository: "https://github.com/eonpatapon/tree-sitter-cue.git"
+    revision: "eefee1c1ee76ccf0d7880814155b67c1738d5f89"
+    note: "Native-only: this upstream revision does not provide Go bindings."
+    language_support:
+      assessed_revision: "eefee1c1ee76ccf0d7880814155b67c1738d5f89"
+      claim: unverified
+      limitations:
+        - "No explicit source-language version support claim was found in the pinned upstream README; version support remains unverified."
+      evidence:
+        - kind: documentation
+          source: "https://github.com/eonpatapon/tree-sitter-cue/blob/eefee1c1ee76ccf0d7880814155b67c1738d5f89/README.md"
+          description: "The README identifies the grammar but does not establish supported source-language versions."
+    sample: "package example\nanswer: 42\n"
+
+  - name: "hcl"
+    grammar: "hcl"
+    constructor: "tree_sitter_hcl"
+    version: "v1.2.1-0.20260117144248-64ad62785d44"
+    repository: "https://github.com/tree-sitter-grammars/tree-sitter-hcl.git"
+    revision: "64ad62785d442eb4d45df3a1764962dafd5bc98b"
+    language_support:
+      assessed_revision: "64ad62785d442eb4d45df3a1764962dafd5bc98b"
+      claim: unverified
+      limitations:
+        - "No explicit source-language version support claim was found in the pinned upstream README; version support remains unverified."
+      evidence:
+        - kind: documentation
+          source: "https://github.com/tree-sitter-grammars/tree-sitter-hcl/blob/64ad62785d442eb4d45df3a1764962dafd5bc98b/README.md"
+          description: "The README identifies the grammar but does not establish supported source-language versions."
+    sample: "variable \"name\" {\n  default = \"hello\"\n}\n"
+
+  - name: "nix"
+    grammar: "nix"
+    constructor: "tree_sitter_nix"
+    version: "v0.3.0"
+    repository: "https://github.com/cstrahan/tree-sitter-nix.git"
+    revision: "64d4f7827dc1a8c7c88108ffdb47b961a729df05"
+    note: "Native-only: this upstream revision does not provide Go bindings."
+    language_support:
+      assessed_revision: "64d4f7827dc1a8c7c88108ffdb47b961a729df05"
+      claim: unverified
+      limitations:
+        - "No explicit source-language version support claim was found in the pinned upstream README; version support remains unverified."
+      evidence:
+        - kind: documentation
+          source: "https://github.com/cstrahan/tree-sitter-nix/blob/64d4f7827dc1a8c7c88108ffdb47b961a729df05/README.md"
+          description: "The README identifies the grammar but does not establish supported source-language versions."
+    sample: "{ answer = 42; }\n"
+
+  - name: "zsh"
+    grammar: "zsh"
+    constructor: "tree_sitter_zsh"
+    version: "v0.63.5"
+    repository: "https://github.com/georgeharker/tree-sitter-zsh.git"
+    revision: "7a593401efb5418ffdedbe3c0e4c61c6d240166d"
+    language_support:
+      assessed_revision: "7a593401efb5418ffdedbe3c0e4c61c6d240166d"
+      claim: unverified
+      limitations:
+        - "No explicit source-language version support claim was found in the pinned upstream README; version support remains unverified."
+      evidence:
+        - kind: documentation
+          source: "https://github.com/georgeharker/tree-sitter-zsh/blob/7a593401efb5418ffdedbe3c0e4c61c6d240166d/README.md"
+          description: "The README identifies the grammar but does not establish supported source-language versions."
+    sample: "typeset answer=42\nprint -r -- \"$answer\"\n"
+
+  - name: "fish"
+    grammar: "fish"
+    constructor: "tree_sitter_fish"
+    version: "v3.7.0"
+    repository: "https://github.com/ram02z/tree-sitter-fish.git"
+    revision: "b7f1d682941e0c62dfcd6bf9ef481638351bab16"
+    note: "Native-only: this upstream revision does not provide Go bindings."
+    language_support:
+      assessed_revision: "b7f1d682941e0c62dfcd6bf9ef481638351bab16"
+      claim: unverified
+      limitations:
+        - "No explicit source-language version support claim was found in the pinned upstream README; version support remains unverified."
+      evidence:
+        - kind: documentation
+          source: "https://github.com/ram02z/tree-sitter-fish/blob/b7f1d682941e0c62dfcd6bf9ef481638351bab16/README.md"
+          description: "The README identifies the grammar but does not establish supported source-language versions."
+    sample: "set answer 42\necho $answer\n"
+
+  - name: "prisma"
+    grammar: "prisma"
+    constructor: "tree_sitter_prisma"
+    version: "v1.6.0"
+    repository: "https://github.com/victorhqc/tree-sitter-prisma.git"
+    revision: "3556b2c1f20ec9ac91e92d32c43d9d2a0ca3cc49"
+    language_support:
+      assessed_revision: "3556b2c1f20ec9ac91e92d32c43d9d2a0ca3cc49"
+      claim: unverified
+      limitations:
+        - "No explicit source-language version support claim was found in the pinned upstream README; version support remains unverified."
+      evidence:
+        - kind: documentation
+          source: "https://github.com/victorhqc/tree-sitter-prisma/blob/3556b2c1f20ec9ac91e92d32c43d9d2a0ca3cc49/README.md"
+          description: "The README identifies the grammar but does not establish supported source-language versions."
+    sample: "model User {\n  id Int @id\n}\n"
+
+  - name: "vue"
+    grammar: "vue"
+    constructor: "tree_sitter_vue"
+    version: "v0.1.0"
+    repository: "https://github.com/tree-sitter-grammars/tree-sitter-vue.git"
+    revision: "ce8011a414fdf8091f4e4071752efc376f4afb08"
+    note: "Native-only: this upstream revision does not provide Go bindings."
+    language_support:
+      assessed_revision: "ce8011a414fdf8091f4e4071752efc376f4afb08"
+      claim: unverified
+      limitations:
+        - "No explicit source-language version support claim was found in the pinned upstream README; version support remains unverified."
+      evidence:
+        - kind: documentation
+          source: "https://github.com/tree-sitter-grammars/tree-sitter-vue/blob/ce8011a414fdf8091f4e4071752efc376f4afb08/README.md"
+          description: "The README identifies the grammar but does not establish supported source-language versions."
+    sample: "<template><div>Hello</div></template>\n"
+
+  - name: "svelte"
+    grammar: "svelte"
+    constructor: "tree_sitter_svelte"
+    version: "v1.0.3-0.20241019183240-ae5199db4775"
+    repository: "https://github.com/tree-sitter-grammars/tree-sitter-svelte.git"
+    revision: "ae5199db47757f785e43a14b332118a5474de1a2"
+    language_support:
+      assessed_revision: "ae5199db47757f785e43a14b332118a5474de1a2"
+      claim: unverified
+      limitations:
+        - "No explicit source-language version support claim was found in the pinned upstream README; version support remains unverified."
+      evidence:
+        - kind: documentation
+          source: "https://github.com/tree-sitter-grammars/tree-sitter-svelte/blob/ae5199db47757f785e43a14b332118a5474de1a2/README.md"
+          description: "The README identifies the grammar but does not establish supported source-language versions."
+    sample: "<script>let answer = 42;</script>\n<p>{answer}</p>\n"
+
+  - name: "objc"
+    grammar: "objc"
+    constructor: "tree_sitter_objc"
+    version: "v1.2.1-0.20250131075517-181a81b8f23a"
+    repository: "https://github.com/tree-sitter-grammars/tree-sitter-objc.git"
+    revision: "181a81b8f23a2d593e7ab4259981f50122909fda"
+    language_support:
+      assessed_revision: "181a81b8f23a2d593e7ab4259981f50122909fda"
+      claim: unverified
+      limitations:
+        - "No supported Objective-C version range is documented. This grammar extends C, not C++; Objective-C++ (.mm) coverage is partial."
+      evidence:
+        - kind: documentation
+          source: "https://github.com/tree-sitter-grammars/tree-sitter-objc/blob/181a81b8f23a2d593e7ab4259981f50122909fda/README.md"
+          description: "The README identifies the grammar but does not establish supported source-language versions."
+    sample: "@interface Example\n@end\n"
+
+  - name: "json5"
+    grammar: "json5"
+    constructor: "tree_sitter_json5"
+    version: "v0.1.1-0.20260505013339-248b85645670"
+    repository: "https://github.com/Joakker/tree-sitter-json5.git"
+    revision: "248b8564567087d7866be76569b182f6dd7e14e9"
+    language_support:
+      assessed_revision: "248b8564567087d7866be76569b182f6dd7e14e9"
+      claim: unverified
+      limitations:
+        - "The pinned repository has no README establishing JSON5 version support; package metadata and examples do not verify conformance. JSONC routing uses a permissive syntax superset."
+    sample: "{answer: 'hello',}\n"
+
+  - name: "less"
+    note: "Native-only: upstream has a nested Go module with a mismatched module path; no importable root binding at this revision."
+    grammar: "less"
+    constructor: "tree_sitter_less"
+    version: "v0.0.0-20260415221443-02988c765d30"
+    repository: "https://github.com/mdovale/tree-sitter-less.git"
+    revision: "02988c765d30adb0476657b5d220e8dfde1c07d3"
+    language_support:
+      assessed_revision: "02988c765d30adb0476657b5d220e8dfde1c07d3"
+      claim: unverified
+      limitations:
+        - "No explicit source-language version support claim was found in the pinned upstream README; version support remains unverified."
+      evidence:
+        - kind: documentation
+          source: "https://github.com/mdovale/tree-sitter-less/blob/02988c765d30adb0476657b5d220e8dfde1c07d3/README.md"
+          description: "The README identifies the grammar but does not establish supported source-language versions."
+    sample: "@color: red;\na { color: @color; }\n"
+
+  - name: "mdx"
+    grammar: "mdx"
+    constructor: "tree_sitter_mdx"
+    version: "v0.0.0-20251226211558-3aa29e8de1bf"
+    repository: "https://github.com/srazzak/tree-sitter-mdx.git"
+    revision: "3aa29e8de1bf0213948a04fe953039b6ab73777b"
+    language_support:
+      assessed_revision: "3aa29e8de1bf0213948a04fe953039b6ab73777b"
+      claim: unverified
+      limitations:
+        - "No explicit source-language version support claim was found in the pinned upstream README; version support remains unverified."
+      evidence:
+        - kind: documentation
+          source: "https://github.com/srazzak/tree-sitter-mdx/blob/3aa29e8de1bf0213948a04fe953039b6ab73777b/README.md"
+          description: "The README identifies the grammar but does not establish supported source-language versions."
+    sample: "# Hello\n\n<Example answer={42} />\n"

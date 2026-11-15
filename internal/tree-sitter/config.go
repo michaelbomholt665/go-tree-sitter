@@ -26,6 +26,7 @@ type Config struct {
 	OSTarget             string                 `yaml:"OS_TARGET"`
 	Targets              map[string]BuildTarget `yaml:"targets"`
 	ABIVersions          map[string]ABIRange    `yaml:"abi_versions,omitempty"` // Deprecated: never used for artifact ABI metadata.
+	Runtime              RuntimeConfig          `yaml:"runtime"`
 	Languages            []Language             `yaml:"languages"`
 	Output               Output                 `yaml:"output"`
 	Prune                bool                   `yaml:"prune,omitempty"`
@@ -46,17 +47,18 @@ type ABIRange struct {
 }
 
 type Language struct {
-	Name              string `yaml:"name"`
-	Grammar           string `yaml:"grammar"`
-	Constructor       string `yaml:"constructor"`
-	Version           string `yaml:"version"`
-	GenerateABI       *int   `yaml:"generate_abi,omitempty"`
-	TreeSitterVersion string `yaml:"tree_sitter_version,omitempty"` // Deprecated compatibility input; never emitted as measured provenance.
-	Repository        string `yaml:"repository"`
-	Revision          string `yaml:"revision"`
-	SourceSubdir      string `yaml:"source_subdir"`
-	Sample            string `yaml:"sample"`
-	Note              string `yaml:"note,omitempty"`
+	Name              string                     `yaml:"name"`
+	Grammar           string                     `yaml:"grammar"`
+	Constructor       string                     `yaml:"constructor"`
+	Version           string                     `yaml:"version"`
+	GenerateABI       *int                       `yaml:"generate_abi,omitempty"`
+	TreeSitterVersion string                     `yaml:"tree_sitter_version,omitempty"` // Deprecated compatibility input; never emitted as measured provenance.
+	Repository        string                     `yaml:"repository"`
+	Revision          string                     `yaml:"revision"`
+	SourceSubdir      string                     `yaml:"source_subdir"`
+	Sample            string                     `yaml:"sample"`
+	Note              string                     `yaml:"note,omitempty"`
+	LanguageSupport   *LanguageSupportAssessment `yaml:"language_support,omitempty"`
 }
 
 type Output struct {
@@ -93,6 +95,9 @@ func (c *Config) Validate() error {
 		return errors.New("config is nil")
 	}
 
+	if err := c.EffectiveRuntime().Validate(); err != nil {
+		return err
+	}
 	if err := c.validateRequiredFields(); err != nil {
 		return err
 	}
@@ -102,6 +107,9 @@ func (c *Config) Validate() error {
 func (c *Config) validateRequiredFields() error {
 	if strings.TrimSpace(c.Version) == "" {
 		return errors.New("version is required")
+	}
+	if c.Version != "2.0" {
+		return fmt.Errorf("unsupported config version %q; expected 2.0", c.Version)
 	}
 	if c.Version == "2.0" {
 		if strings.TrimSpace(c.TreeSitterCLIVersion) == "" {
@@ -317,6 +325,9 @@ func (c *Config) validateLanguage(index int, lang *Language, seen map[string]str
 	if lang.Revision != "" && !regexp.MustCompile(`^[0-9a-fA-F]{40}$`).MatchString(lang.Revision) {
 		return fmt.Errorf("languages[%d].revision must be a full 40-character commit", index)
 	}
+	if err := lang.LanguageSupport.Validate(); err != nil {
+		return fmt.Errorf("languages[%d].language_support: %w", index, err)
+	}
 	if lang.GenerateABI != nil {
 		if *lang.GenerateABI <= 0 {
 			return fmt.Errorf("languages[%d].generate_abi must be a positive integer", index)
@@ -493,6 +504,7 @@ func parseRangeExpression(expr string) ([]versionConstraint, error) {
 }
 
 func applyDefaults(cfg *Config) {
+	cfg.Runtime = cfg.EffectiveRuntime()
 	if cfg.ABIRange == nil {
 		cfg.ABIRange = &ABIRange{Min: 13, Max: 15}
 	}

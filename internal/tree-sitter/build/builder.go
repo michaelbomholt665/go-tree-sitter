@@ -18,6 +18,7 @@ import (
 )
 
 var pseudoVersionPattern = regexp.MustCompile(`^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?(?:-|\.)\d{14}-([0-9a-f]{12})$`)
+var revisionPinPattern = regexp.MustCompile(`^[0-9a-fA-F]{40}$`)
 
 type Builder struct {
 	runner   _jsii.CommandRunner
@@ -46,11 +47,24 @@ func NewBuilderWithReporter(runner _jsii.CommandRunner, r _jsii.Reporter) *Build
 }
 
 func (b *Builder) Build(ctx context.Context, cfg *_jsii.Config, req _jsii.BuildRequest) error {
+	if cfg.Output.GrammarBase != "" {
+		if err := cfg.ValidateBuildPaths(); err != nil {
+			return err
+		}
+	}
+	local := *b
+	local.runner = _jsii.WithToolPaths(b.runner, cfg.EffectiveRuntime().Tools)
+	b = &local
 	languages, err := cfg.ResolveLanguages(req.Language)
 	if err != nil {
 		return err
 	}
 
+	for _, lang := range languages {
+		if !revisionPinPattern.MatchString(lang.Revision) {
+			return fmt.Errorf("language %q requires a full 40-character revision pin", lang.Name)
+		}
+	}
 	if err := os.MkdirAll(cfg.BuildDir, 0o755); err != nil {
 		return fmt.Errorf("create build directory %q: %w", cfg.BuildDir, err)
 	}
@@ -65,6 +79,9 @@ func (b *Builder) Build(ctx context.Context, cfg *_jsii.Config, req _jsii.BuildR
 
 	var buildErrors []error
 	for _, lang := range languages {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if err := b.buildLanguage(ctx, cfg, lang, req, generatorVersion); err != nil {
 			buildErrors = append(buildErrors, fmt.Errorf("build %s: %w", lang.Name, err))
 		}
@@ -77,6 +94,12 @@ func (b *Builder) buildLanguage(ctx context.Context, cfg *_jsii.Config, lang _js
 	b.reporter.Start("build", lang.Name)
 
 	root := buildRootDir(cfg, lang)
+	if _, err := languageCleanupRoots(cfg, lang); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if req.Force {
 		if err := os.RemoveAll(root); err != nil {
 			err = fmt.Errorf("remove existing build directory %q: %w", root, err)
@@ -99,19 +122,10 @@ func (b *Builder) buildLanguage(ctx context.Context, cfg *_jsii.Config, lang _js
 		b.reporter.Failure("build", lang.Name, err, "")
 		return err
 	} else if err := b.checkoutVersion(ctx, lang, root); err != nil {
-		// If checkout in the existing directory fails (e.g. incomplete clone or pruned repo),
-		// clean and retry with a fresh clone.
-		if remErr := os.RemoveAll(root); remErr == nil {
-			if clErr := b.cloneRepository(ctx, lang, root); clErr == nil {
-				if coErr := b.checkoutVersion(ctx, lang, root); coErr == nil {
-					goto checkedOut
-				}
-			}
-		}
+		// Preserve the workspace; only --force authorizes its removal.
 		b.reporter.Failure("build", lang.Name, err, diagnosticsFrom(err))
 		return err
 	}
-checkedOut:
 
 	src := sourceDir(cfg, lang)
 	if info, err := os.Stat(src); err != nil {
@@ -150,7 +164,7 @@ checkedOut:
 		return err
 	}
 	buildEnv := map[string]string{"SOURCE_DATE_EPOCH": strconv.FormatInt(epoch, 10)}
-	if err := b.installNodeDependencies(ctx, lang.Name, root, buildEnv); err != nil {
+	if err := b.installNodeDependencies(ctx, lang.Name, root, buildEnv, cfg.EffectiveRuntime().Node); err != nil {
 		b.reporter.Failure("build", lang.Name, err, diagnosticsFrom(err))
 		return err
 	}
@@ -200,7 +214,7 @@ checkedOut:
 	}
 
 	// If explicit targetABI failed and lang.GenerateABI was not hardcoded, attempt fallbacks within abi_range
-	if genErr != nil && lang.GenerateABI == nil && targetABI > minABI {
+	if genErr != nil && _jsii.BoolValue(cfg.EffectiveRuntime().Generation.ABIFallback, true) && lang.GenerateABI == nil && targetABI > minABI {
 		for fallbackABI := targetABI - 1; fallbackABI >= minABI; fallbackABI-- {
 			if err := runGenerate(fallbackABI); err == nil {
 				genErr = nil
@@ -242,6 +256,10 @@ checkedOut:
 		b.reporter.Failure("build", lang.Name, err, "")
 		return err
 	}
+	sourceHashes, err := hashSourceInputs(src)
+	if err != nil {
+		return err
+	}
 	provenance := SourceProvenance{
 		SourceRepository: lang.Repository,
 		SourceRevision:   revision,
@@ -249,6 +267,7 @@ checkedOut:
 		GenerateABI:      generateABI,
 		SourceDateEpoch:  epoch,
 		NodeTypesSHA256:  nodeTypesChecksum,
+		SourceHashes:     sourceHashes,
 	}
 	if err := writeJSONAtomic(filepath.Join(root, sourceProvenanceFilename), &provenance); err != nil {
 		err = fmt.Errorf("write source provenance: %w", err)
@@ -258,7 +277,7 @@ checkedOut:
 
 	if req.Prune || cfg.Prune {
 		cleaner := NewCleaner()
-		if err := cleaner.PruneLanguage(cfg.BuildDir, lang.Name); err != nil {
+		if err := cleaner.cleanupLanguage(cfg, lang, "prune"); err != nil {
 			err = fmt.Errorf("prune build cache: %w", err)
 			b.reporter.Failure("build", lang.Name, err, "")
 			return err
@@ -281,7 +300,10 @@ func (b *Builder) generatorVersion(ctx context.Context) (string, error) {
 	return version, nil
 }
 
-func (b *Builder) installNodeDependencies(ctx context.Context, langName, root string, env map[string]string) error {
+func (b *Builder) installNodeDependencies(ctx context.Context, langName, root string, env map[string]string, policy _jsii.NodePolicy) error {
+	if policy.Install == "never" {
+		return nil
+	}
 	packageJSON := filepath.Join(root, "package.json")
 	if _, err := os.Stat(packageJSON); os.IsNotExist(err) {
 		return nil
@@ -290,35 +312,42 @@ func (b *Builder) installNodeDependencies(ctx context.Context, langName, root st
 	}
 
 	nodeModules := filepath.Join(root, "node_modules")
-	if info, err := os.Stat(nodeModules); err == nil && info.IsDir() {
+	if info, err := os.Stat(nodeModules); err == nil && info.IsDir() && policy.Install != "always" {
 		return nil
 	} else if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("inspect node dependencies %q: %w", nodeModules, err)
 	}
 
+	args := policy.CIArgs
 	lockFile := filepath.Join(root, "package-lock.json")
 	if _, err := os.Stat(lockFile); err != nil {
-		if os.IsNotExist(err) {
+		if !os.IsNotExist(err) {
+			return fmt.Errorf("inspect package lock %q: %w", lockFile, err)
+		}
+		if policy.Install == "auto" {
 			b.reporter.Info("skipping npm in %s: no lockfile (uses checked-in sources; grammar build is unaffected)", langName)
 			return nil
 		}
-		return fmt.Errorf("inspect package lock %q: %w", lockFile, err)
+		args = policy.InstallArgs
 	}
 
 	var npmOut, npmErr bytes.Buffer
 	if err := b.runCaptured(ctx, _jsii.Command{
 		Name:          "npm",
-		Args:          []string{"ci", "--ignore-scripts"},
+		Args:          args,
 		Dir:           root,
 		Env:           env,
 		SilenceStderr: true,
 	}, &npmOut, &npmErr); err != nil {
+		if !_jsii.BoolValue(policy.RetryInstall, true) {
+			return fmt.Errorf("install node dependencies: %w", err)
+		}
 		// Retry with npm install.
 		npmOut.Reset()
 		npmErr.Reset()
 		if err2 := b.runCaptured(ctx, _jsii.Command{
 			Name: "npm",
-			Args: []string{"install", "--ignore-scripts", "--no-audit", "--no-fund"},
+			Args: policy.InstallArgs,
 			Dir:  root,
 			Env:  env,
 		}, &npmOut, &npmErr); err2 != nil {

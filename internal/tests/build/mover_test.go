@@ -23,13 +23,14 @@ func (acceptingValidator) Validate(_ context.Context, items []tsbuild.Validation
 
 func writeBinaryProvenance(t *testing.T, binaryPath, nodeTypesPath string) {
 	t.Helper()
-	checksums, err := tsbuild.CalculateChecksums([]string{nodeTypesPath})
+	checksums, err := tsbuild.CalculateChecksums([]string{nodeTypesPath, binaryPath})
 	if err != nil {
 		t.Fatalf("checksum node types: %v", err)
 	}
 	payload, err := json.Marshal(tsbuild.BinaryProvenance{
+		SHA256:   checksums[binaryPath],
 		Filename: filepath.Base(binaryPath), SourceRepository: "https://example.invalid/grammar",
-		SourceRevision: "0123456789012345678901234567890123456789", GeneratorVersion: "0.26.8",
+		SourceRevision: reviewFixtureRevision, GeneratorVersion: "0.26.8",
 		SourceDateEpoch: 1_700_000_000, NodeTypesSHA256: checksums[nodeTypesPath], TargetTriple: "x86_64-linux-gnu",
 		Compiler: "gcc", CompilerVersion: "gcc 14.2.0",
 	})
@@ -88,6 +89,7 @@ func TestMoverCopiesArtifactsGeneratesManifestAndCleans(t *testing.T) {
 	}
 
 	mover := tsbuild.NewMoverWithValidator(tsbuild.NewCleaner(), acceptingValidator{}, ioDiscard{}, ioDiscard{})
+	prepareArtifactConfig(cfg)
 	if err := mover.Move(context.Background(), cfg, ts.MoveRequest{Language: "python", Mode: ts.MoveModeBoth, Clean: true, GenerateManifest: true, CopySCM: true}); err != nil {
 		t.Fatalf("Move returned error: %v", err)
 	}
@@ -151,6 +153,7 @@ func TestMoverSkipsLanguageWhenBuildArtifactsWereAlreadyMoved(t *testing.T) {
 	}
 
 	mover := tsbuild.NewMoverWithValidator(tsbuild.NewCleaner(), acceptingValidator{}, ioDiscard{}, ioDiscard{})
+	prepareArtifactConfig(cfg)
 	if err := mover.Move(context.Background(), cfg, ts.MoveRequest{Language: "python", Mode: ts.MoveModeBoth, Clean: true, Force: true}); err == nil {
 		t.Fatalf("expected publication without staged build provenance to fail")
 	}
@@ -208,6 +211,7 @@ func TestMoverCopiesQueriesFromRepositoryRootForSubdirGrammar(t *testing.T) {
 	}
 
 	mover := tsbuild.NewMoverWithValidator(tsbuild.NewCleaner(), acceptingValidator{}, ioDiscard{}, ioDiscard{})
+	prepareArtifactConfig(cfg)
 	if err := mover.Move(context.Background(), cfg, ts.MoveRequest{Language: "tsx", Mode: ts.MoveModeBoth, Clean: true, Force: true, GenerateManifest: true, CopySCM: true}); err != nil {
 		t.Fatalf("Move returned error: %v", err)
 	}
@@ -255,15 +259,16 @@ func TestMoverCrossPlatformPublishing(t *testing.T) {
 		if err := os.WriteFile(binPath, []byte("mock binary bytes for "+filepath.Base(binPath)), 0o644); err != nil {
 			t.Fatalf("write binary %s: %v", binPath, err)
 		}
-		checksums, err := tsbuild.CalculateChecksums([]string{nodeTypesPath})
+		checksums, err := tsbuild.CalculateChecksums([]string{nodeTypesPath, binPath})
 		if err != nil {
 			t.Fatalf("checksum node types: %v", err)
 		}
 		abi := 15
 		payload, err := json.Marshal(tsbuild.BinaryProvenance{
 			Filename:         filepath.Base(binPath),
-			SourceRepository: "https://github.com/tree-sitter/tree-sitter-python.git",
-			SourceRevision:   "0123456789012345678901234567890123456789",
+			SHA256:           checksums[binPath],
+			SourceRepository: "https://example.invalid/grammar",
+			SourceRevision:   reviewFixtureRevision,
 			GeneratorVersion: "0.26.8",
 			GenerateABI:      &abi,
 			SourceDateEpoch:  1_700_000_000,
@@ -310,6 +315,7 @@ func TestMoverCrossPlatformPublishing(t *testing.T) {
 	}
 
 	mover := tsbuild.NewMoverWithValidator(tsbuild.NewCleaner(), acceptingValidator{}, ioDiscard{}, ioDiscard{})
+	prepareArtifactConfig(cfg)
 	if err := mover.Move(context.Background(), cfg, ts.MoveRequest{
 		Language:             "python",
 		Mode:                 ts.MoveModeBoth,
@@ -412,6 +418,7 @@ func TestMoverWithoutManifest(t *testing.T) {
 	}
 
 	mover := tsbuild.NewMoverWithValidator(tsbuild.NewCleaner(), acceptingValidator{}, ioDiscard{}, ioDiscard{})
+	prepareArtifactConfig(cfg)
 	if err := mover.Move(context.Background(), cfg, ts.MoveRequest{
 		Language:         "python",
 		Mode:             ts.MoveModeBoth,
@@ -485,6 +492,7 @@ func TestMoverWithoutSCM(t *testing.T) {
 	}
 
 	mover := tsbuild.NewMoverWithValidator(tsbuild.NewCleaner(), acceptingValidator{}, ioDiscard{}, ioDiscard{})
+	prepareArtifactConfig(cfg)
 	if err := mover.Move(context.Background(), cfg, ts.MoveRequest{
 		Language:         "python",
 		Mode:             ts.MoveModeBoth,
@@ -574,6 +582,7 @@ func TestMoverWithoutManifestAndWithoutSCM(t *testing.T) {
 	}
 
 	mover := tsbuild.NewMoverWithValidator(tsbuild.NewCleaner(), acceptingValidator{}, ioDiscard{}, ioDiscard{})
+	prepareArtifactConfig(cfg)
 	if err := mover.Move(context.Background(), cfg, ts.MoveRequest{
 		Language:         "python",
 		Mode:             ts.MoveModeBoth,
@@ -674,6 +683,7 @@ func TestMoverPreservesCSource(t *testing.T) {
 	}
 
 	mover := tsbuild.NewMoverWithValidator(tsbuild.NewCleaner(), acceptingValidator{}, ioDiscard{}, ioDiscard{})
+	prepareArtifactConfig(cfg)
 	if err := mover.Move(context.Background(), cfg, ts.MoveRequest{
 		Language:         "python",
 		Mode:             ts.MoveModeBoth,
@@ -741,6 +751,7 @@ func TestMoverPreservesGrammarJS(t *testing.T) {
 	}
 
 	mover := tsbuild.NewMoverWithValidator(tsbuild.NewCleaner(), acceptingValidator{}, ioDiscard{}, ioDiscard{})
+	prepareArtifactConfig(cfg)
 	if err := mover.Move(context.Background(), cfg, ts.MoveRequest{
 		Language:         "python",
 		Mode:             ts.MoveModeBoth,
@@ -803,6 +814,7 @@ func TestMoverPreservesWasm(t *testing.T) {
 	}
 
 	mover := tsbuild.NewMoverWithValidator(tsbuild.NewCleaner(), acceptingValidator{}, ioDiscard{}, ioDiscard{})
+	prepareArtifactConfig(cfg)
 	if err := mover.Move(context.Background(), cfg, ts.MoveRequest{
 		Language:         "python",
 		Mode:             ts.MoveModeBoth,
@@ -871,6 +883,7 @@ func TestMoverPreservesAllArtifactsTogether(t *testing.T) {
 	}
 
 	mover := tsbuild.NewMoverWithValidator(tsbuild.NewCleaner(), acceptingValidator{}, ioDiscard{}, ioDiscard{})
+	prepareArtifactConfig(cfg)
 	if err := mover.Move(context.Background(), cfg, ts.MoveRequest{
 		Language:         "python",
 		Mode:             ts.MoveModeBoth,
@@ -1016,6 +1029,7 @@ func TestMoverCompactGeneratesAndStagesCompactNodeTypes(t *testing.T) {
 	}
 
 	mover := tsbuild.NewMoverWithValidator(tsbuild.NewCleaner(), acceptingValidator{}, ioDiscard{}, ioDiscard{})
+	prepareArtifactConfig(cfg)
 	err := mover.Move(context.Background(), cfg, ts.MoveRequest{
 		Language:         "python",
 		Compact:          true,
@@ -1079,6 +1093,7 @@ func TestMoverCompactFailsOnInvalidRawJSON(t *testing.T) {
 	}
 
 	mover := tsbuild.NewMoverWithValidator(tsbuild.NewCleaner(), acceptingValidator{}, ioDiscard{}, ioDiscard{})
+	prepareArtifactConfig(cfg)
 	err := mover.Move(context.Background(), cfg, ts.MoveRequest{
 		Language: "python",
 		Compact:  true,
@@ -1120,6 +1135,7 @@ func TestMoverCheckCompactValidatesExisting(t *testing.T) {
 	mover := tsbuild.NewMoverWithValidator(tsbuild.NewCleaner(), acceptingValidator{}, ioDiscard{}, ioDiscard{})
 
 	// 1. Missing compact-node-types.yaml -> should fail
+	prepareArtifactConfig(cfg)
 	err := mover.Move(context.Background(), cfg, ts.MoveRequest{
 		Language:     "python",
 		CheckCompact: true,
@@ -1137,6 +1153,7 @@ func TestMoverCheckCompactValidatesExisting(t *testing.T) {
 		t.Fatalf("write compact-node-types.yaml: %v", err)
 	}
 
+	prepareArtifactConfig(cfg)
 	err = mover.Move(context.Background(), cfg, ts.MoveRequest{
 		Language:     "python",
 		CheckCompact: true,
@@ -1149,6 +1166,7 @@ func TestMoverCheckCompactValidatesExisting(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(sourceDir, "compact-node-types.yaml"), []byte("supertypes:\n\nnodes:\n  bad: {}\n"), 0o644); err != nil {
 		t.Fatalf("write bad compact: %v", err)
 	}
+	prepareArtifactConfig(cfg)
 	err = mover.Move(context.Background(), cfg, ts.MoveRequest{
 		Language:     "python",
 		CheckCompact: true,

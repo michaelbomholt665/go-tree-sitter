@@ -1,10 +1,10 @@
 package treesitter
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"github.com/michaelbomholt665/go-tree-sitter/internal/commandexec"
 	"io"
 	"os"
 	"os/exec"
@@ -15,7 +15,7 @@ import (
 
 const AppVersion = "1.0.0"
 const DefaultConfigPath = "tree-sitter-config.yaml"
-const configFlagDescription = "Path to the YAML configuration file."
+const configFlagDescription = "Override automatic .env development / OS user configuration selection."
 
 type MoveMode string
 
@@ -44,6 +44,7 @@ type MoveRequest struct {
 	Language              string
 	Mode                  MoveMode
 	Clean                 bool
+	CleanupAction         string
 	Force                 bool
 	AllowCrossValidation  bool
 	StaticCrossValidation bool
@@ -101,15 +102,16 @@ func (OSPathLookup) LookPath(name string) (string, error) {
 // ─── App ─────────────────────────────────────────────────────────────────────
 
 type App struct {
-	stdout    io.Writer
-	stderr    io.Writer
-	lookup    PathLookup
-	load      ConfigLoader
-	builder   Builder
-	compiler  Compiler
-	mover     Mover
-	cleaner   Cleaner
-	compactor Compactor
+	stdout         io.Writer
+	stderr         io.Writer
+	lookup         PathLookup
+	load           ConfigLoader
+	discoverConfig bool
+	builder        Builder
+	compiler       Compiler
+	mover          Mover
+	cleaner        Cleaner
+	compactor      Compactor
 }
 
 func NewApp(stdout, stderr io.Writer, lookup PathLookup, load ConfigLoader, builder Builder, compiler Compiler, mover Mover) *App {
@@ -122,18 +124,20 @@ func NewApp(stdout, stderr io.Writer, lookup PathLookup, load ConfigLoader, buil
 	if lookup == nil {
 		lookup = OSPathLookup{}
 	}
+	discoverConfig := load == nil
 	if load == nil {
-		load = LoadConfig
+		load = loadRuntimeConfig
 	}
 
 	return &App{
-		stdout:   stdout,
-		stderr:   stderr,
-		lookup:   lookup,
-		load:     load,
-		builder:  builder,
-		compiler: compiler,
-		mover:    mover,
+		stdout:         stdout,
+		stderr:         stderr,
+		lookup:         lookup,
+		load:           load,
+		discoverConfig: discoverConfig,
+		builder:        builder,
+		compiler:       compiler,
+		mover:          mover,
 	}
 }
 
@@ -159,6 +163,9 @@ func (a *App) Run(ctx context.Context, args []string) error {
 // NewRootCmd builds and returns the Cobra root command for use in tests and
 // in main.go.
 func (a *App) NewRootCmd() *cobra.Command {
+	// Keep per-execution preview adapters out of the reusable App.
+	instance := *a
+	a = &instance
 	var configPath string
 	var verbose bool
 	var quiet bool
@@ -171,6 +178,24 @@ func (a *App) NewRootCmd() *cobra.Command {
 
 Use --verbose to stream raw child-process output.
 Use --quiet to silence all non-error output.`,
+		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+			if isDryRun(cmd) {
+				return a.prepareDryRun(cmd, &configPath)
+			}
+			if !a.discoverConfig || cmd.Flags().Changed("config") {
+				return nil
+			}
+			switch cmd.Name() {
+			case "help", "version", "completion", "bash", "zsh", "fish", "powershell", "regen-manifests", "__complete", "__completeNoDesc":
+				return nil
+			}
+			path, err := ResolveConfigPath()
+			if err != nil {
+				return err
+			}
+			configPath = path
+			return nil
+		},
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
@@ -182,6 +207,7 @@ Use --quiet to silence all non-error output.`,
 	root.PersistentFlags().StringVarP(&configPath, "config", "c", DefaultConfigPath, configFlagDescription)
 	root.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "Stream raw child-process stdout/stderr.")
 	root.PersistentFlags().BoolVarP(&quiet, "quiet", "q", false, "Silence all non-error output.")
+	root.PersistentFlags().Bool("dry-run", false, "Validate inputs and preview actions without executing tools or changing files.")
 
 	// Helper to build a reporter respecting the global flags.
 	makeReporter := func() Reporter {
@@ -198,6 +224,12 @@ Use --quiet to silence all non-error output.`,
 		a.cleanCmd(&configPath, &verbose, makeReporter),
 		a.compactCmd(&configPath, &verbose, makeReporter),
 		a.wizardCmd(&configPath, &verbose, makeReporter),
+		a.configCmd(&configPath),
+		a.listCmd(&configPath),
+		a.supportCmd(&configPath),
+		a.exportCmd(&configPath),
+		a.syncConfigCmd(&configPath),
+		a.regenManifestsCmd(),
 		&cobra.Command{
 			Use:   "version",
 			Short: "Print the version of ts-build",
@@ -220,6 +252,7 @@ func (a *App) buildCmd(configPath *string, verbose *bool, makeReporter func() Re
 
 	cmd := &cobra.Command{
 		Use:   "build",
+		Args:  cobra.NoArgs,
 		Short: "Clone repositories and generate grammar sources",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if a.builder == nil {
@@ -229,7 +262,7 @@ func (a *App) buildCmd(configPath *string, verbose *bool, makeReporter func() Re
 			if err != nil {
 				return err
 			}
-			if err := RequireTools(a.lookup, "git", "tree-sitter"); err != nil {
+			if err := RequireTools(a.lookup, cfg.EffectiveRuntime().Tools.Git, cfg.EffectiveRuntime().Tools.TreeSitter); err != nil {
 				return err
 			}
 			return a.builder.Build(cmd.Context(), cfg, BuildRequest{
@@ -264,6 +297,7 @@ func (a *App) compileCmd(configPath *string, verbose *bool, makeReporter func() 
 
 	cmd := &cobra.Command{
 		Use:   "compile",
+		Args:  cobra.NoArgs,
 		Short: "Build platform-specific shared libraries from grammar sources",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if a.compiler == nil {
@@ -273,7 +307,8 @@ func (a *App) compileCmd(configPath *string, verbose *bool, makeReporter func() 
 			if err != nil {
 				return err
 			}
-			if err := RequireTools(a.lookup, "tree-sitter"); err != nil {
+			applyPublicationDefaults(cmd, cfg, map[string]*bool{"wasm": &wasmFlag, "allow-cross-validation": &allowCrossValidation})
+			if err := RequireTools(a.lookup, cfg.EffectiveRuntime().Tools.TreeSitter); err != nil {
 				return err
 			}
 			return a.compiler.Compile(cmd.Context(), cfg, CompileRequest{
@@ -323,6 +358,7 @@ func (a *App) moveCmd(configPath *string, verbose *bool, makeReporter func() Rep
 
 	cmd := &cobra.Command{
 		Use:   "move",
+		Args:  cobra.NoArgs,
 		Short: "Organize compiled artifacts, create manifests, and clean build output",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if a.mover == nil {
@@ -333,6 +369,14 @@ func (a *App) moveCmd(configPath *string, verbose *bool, makeReporter func() Rep
 				return err
 			}
 
+			applyPublicationDefaults(cmd, cfg, map[string]*bool{"manifest": &manifestFlag, "compact": &compactFlag, "check-compact": &checkCompactFlag, "source": &sourceFlag, "js": &jsFlag, "wasm": &wasmFlag, "force": &force, "allow-cross-validation": &allowCrossValidation, "clean": &clean})
+			cleanupAction := cfg.EffectiveRuntime().Cleanup.AfterMove
+			if cmd.Flags().Changed("clean") {
+				cleanupAction = "keep"
+				if clean {
+					cleanupAction = "remove"
+				}
+			}
 			if noManifest {
 				manifestFlag = false
 			}
@@ -359,6 +403,9 @@ func (a *App) moveCmd(configPath *string, verbose *bool, makeReporter func() Rep
 
 			// Resolve CopySCM: explicit --scm / --no-scm flag takes precedence over move mode.
 			copySCM := mode.IncludesQueries()
+			if configured := cfg.EffectiveRuntime().Publication.SCM; configured != nil && !jsonMode && !bothMode {
+				copySCM = *configured
+			}
 			if cmd.Flags().Changed("scm") || noSCM {
 				copySCM = scmFlag
 			}
@@ -369,6 +416,7 @@ func (a *App) moveCmd(configPath *string, verbose *bool, makeReporter func() Rep
 				Language:              language,
 				Mode:                  mode,
 				Clean:                 clean,
+				CleanupAction:         cleanupAction,
 				Force:                 force,
 				AllowCrossValidation:  allowCrossValidation || staticCrossValidation,
 				StaticCrossValidation: staticCrossValidation,
@@ -417,6 +465,7 @@ func (a *App) cleanCmd(configPath *string, verbose *bool, makeReporter func() Re
 
 	cmd := &cobra.Command{
 		Use:   "clean",
+		Args:  cobra.NoArgs,
 		Short: "Clean or prune build directories",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if a.cleaner == nil {
@@ -451,6 +500,15 @@ func (a *App) compactCmd(configPath *string, verbose *bool, makeReporter func() 
 	cmd := &cobra.Command{
 		Use:   "compact",
 		Short: "Generate or validate token-efficient compact node types",
+		Args: func(cmd *cobra.Command, args []string) error {
+			if err := cobra.MaximumNArgs(1)(cmd, args); err != nil {
+				return err
+			}
+			if len(args) != 0 && cmd.Flags().Changed("language") {
+				return errors.New("compact accepts either --language or one path, not both")
+			}
+			return nil
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if a.compactor == nil {
 				return errors.New("compact command is not configured")
@@ -484,15 +542,23 @@ func (a *App) compactCmd(configPath *string, verbose *bool, makeReporter func() 
 func (a *App) wizardCmd(configPath *string, verbose *bool, makeReporter func() Reporter) *cobra.Command {
 	return &cobra.Command{
 		Use:   "wizard",
-		Short: "Interactive guided build wizard",
-		Long:  "Launch an interactive step-by-step wizard to configure and run the build pipeline.",
+		Args:  cobra.NoArgs,
+		Short: "Interactive build and settings wizard",
+		Long:  "Launch an interactive step-by-step wizard to edit persistent settings or configure and run the build pipeline.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			run, err := a.wizardSettingsMenu(cmd, *configPath)
+			if err != nil {
+				return err
+			}
+			if !run {
+				return nil
+			}
 			cfg, err := a.load(*configPath)
 			if err != nil {
 				return err
 			}
 
-			result, ok, err := RunWizard(cfg.Languages)
+			result, ok, err := RunWizardWithConfig(cfg)
 			if err != nil {
 				return err
 			}
@@ -521,7 +587,7 @@ func (a *App) wizardCmd(configPath *string, verbose *bool, makeReporter func() R
 					if a.builder == nil {
 						return errors.New("build command is not configured")
 					}
-					if err := RequireTools(a.lookup, "git", "tree-sitter"); err != nil {
+					if err := RequireTools(a.lookup, cfg.EffectiveRuntime().Tools.Git, cfg.EffectiveRuntime().Tools.TreeSitter); err != nil {
 						return err
 					}
 					if err := a.builder.Build(ctx, cfg, BuildRequest{
@@ -541,7 +607,7 @@ func (a *App) wizardCmd(configPath *string, verbose *bool, makeReporter func() R
 					if a.compiler == nil {
 						return errors.New("compile command is not configured")
 					}
-					if err := RequireTools(a.lookup, "tree-sitter"); err != nil {
+					if err := RequireTools(a.lookup, cfg.EffectiveRuntime().Tools.TreeSitter); err != nil {
 						return err
 					}
 					for _, platform := range result.Platforms {
@@ -578,7 +644,8 @@ func (a *App) wizardCmd(configPath *string, verbose *bool, makeReporter func() R
 					if err := a.mover.Move(ctx, cfg, MoveRequest{
 						Language:         lang,
 						Mode:             mode,
-						Clean:            true,
+						Clean:            cfg.EffectiveRuntime().Cleanup.AfterMove != "keep",
+						CleanupAction:    cfg.EffectiveRuntime().Cleanup.AfterMove,
 						Force:            result.Force,
 						GenerateManifest: result.GenerateManifest,
 						CopySCM:          result.CopySCM,
@@ -598,7 +665,6 @@ func (a *App) wizardCmd(configPath *string, verbose *bool, makeReporter func() R
 }
 
 // ─── completion subcommand ────────────────────────────────────────────────────
-
 
 func (a *App) completionCmd(root *cobra.Command) *cobra.Command {
 	return &cobra.Command{
@@ -767,25 +833,28 @@ func NewVerboseExecRunner(stdout, stderr io.Writer, verbose bool) *ExecRunner {
 }
 
 func (r *ExecRunner) Run(ctx context.Context, cmd Command) error {
-	execCmd := exec.CommandContext(ctx, cmd.Name, cmd.Args...)
+	execCmd, err := commandexec.New(ctx, cmd.Name, cmd.Args...)
+	if err != nil {
+		return &CommandError{Command: cmd, Err: err}
+	}
 	execCmd.Dir = cmd.Dir
 	execCmd.Env = mergeEnv(os.Environ(), cmd.Env)
 
-	var stdoutBuf, stderrBuf bytes.Buffer
+	stdoutBuf, stderrBuf := newTailBuffer(64<<10), newTailBuffer(64<<10)
 
 	if r.verbose {
-		execCmd.Stdout = io.MultiWriter(r.stdout, &stdoutBuf)
+		execCmd.Stdout = io.MultiWriter(r.stdout, stdoutBuf)
 		if cmd.SilenceStderr {
-			execCmd.Stderr = &stderrBuf
+			execCmd.Stderr = stderrBuf
 		} else {
-			execCmd.Stderr = io.MultiWriter(r.stderr, &stderrBuf)
+			execCmd.Stderr = io.MultiWriter(r.stderr, stderrBuf)
 		}
 	} else {
-		execCmd.Stdout = &stdoutBuf
-		execCmd.Stderr = &stderrBuf
+		execCmd.Stdout = stdoutBuf
+		execCmd.Stderr = stderrBuf
 	}
 
-	if err := execCmd.Run(); err != nil {
+	if err := commandexec.Run(execCmd); err != nil {
 		outStr := strings.TrimSpace(stdoutBuf.String())
 		errStr := strings.TrimSpace(stderrBuf.String())
 		var combined string
@@ -807,12 +876,23 @@ func (r *ExecRunner) Run(ctx context.Context, cmd Command) error {
 }
 
 func (r *ExecRunner) Output(ctx context.Context, cmd Command) (string, error) {
-	execCmd := exec.CommandContext(ctx, cmd.Name, cmd.Args...)
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	execCmd, err := commandexec.New(ctx, cmd.Name, cmd.Args...)
+	if err != nil {
+		return "", &CommandError{Command: cmd, Err: err}
+	}
 	execCmd.Dir = cmd.Dir
 	execCmd.Env = mergeEnv(os.Environ(), cmd.Env)
 
-	output, err := execCmd.CombinedOutput()
-	trimmed := strings.TrimSpace(string(output))
+	output := newTailBuffer(1 << 20)
+	output.onOverflow = cancel
+	execCmd.Stdout, execCmd.Stderr = output, output
+	err = commandexec.Run(execCmd)
+	if output.overflow {
+		err = errors.New("command output exceeded 1 MiB limit")
+	}
+	trimmed := strings.TrimSpace(output.String())
 	if err != nil {
 		return "", &CommandError{Command: cmd, Output: trimmed, Err: err}
 	}
@@ -851,10 +931,10 @@ func mergeEnv(base []string, overrides map[string]string) []string {
 		if !found {
 			continue
 		}
-		merged[key] = value
+		merged[envKey(key)] = value
 	}
 	for key, value := range overrides {
-		merged[key] = value
+		merged[envKey(key)] = value
 	}
 
 	result := make([]string, 0, len(merged))

@@ -1,16 +1,21 @@
-package build
+package build_test
 
 import (
+	"encoding/binary"
+	"fmt"
+	"os/exec"
+	"runtime"
+
 	"context"
 	"debug/macho"
 	"debug/pe"
+	"github.com/michaelbomholt665/go-tree-sitter/internal/tree-sitter/build"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	sitter "github.com/tree-sitter/go-tree-sitter"
-	python "github.com/tree-sitter/tree-sitter-python/bindings/go"
 
 	_jsii "github.com/michaelbomholt665/go-tree-sitter/internal/tree-sitter"
 )
@@ -18,34 +23,94 @@ import (
 func TestValidateConstructorSymbolsRejectsMissingOrWrongConstructor(t *testing.T) {
 	t.Parallel()
 	for _, symbols := range [][]string{{"tree_sitter_javascript"}, {"ordinary_symbol"}, {"tree_sitter_python", "tree_sitter_javascript"}} {
-		if err := validateConstructorSymbols("grammar.so", "tree_sitter_python", symbols); err == nil {
-			t.Fatalf("expected constructors %v to fail", symbols)
+		path := filepath.Join(t.TempDir(), "grammar.dll")
+		data := createMockPEDLL(t, pe.IMAGE_FILE_MACHINE_AMD64, symbols[0])
+		if len(symbols) == 2 {
+			section := data[512:]
+			binary.LittleEndian.PutUint32(section[24:], 2)
+			binary.LittleEndian.PutUint32(section[32:], 0x1040)
+			binary.LittleEndian.PutUint32(section[64:], 0x1060)
+			binary.LittleEndian.PutUint32(section[68:], 0x1090)
+			copy(section[144:], symbols[1]+"\x00")
+		}
+		writeTestFile(t, path, string(data))
+		_, err := build.NewNativeValidator().Validate(context.Background(), []build.ValidationItem{{
+			Language:   _jsii.Language{Name: "python", Constructor: "tree_sitter_python"},
+			BinaryPath: path, Platform: "windows", Arch: "amd64", GenerateABI: 15,
+		}})
+		if err == nil || !strings.Contains(err.Error(), "expected only") {
+			t.Fatalf("expected constructors %v to fail, got %v", symbols, err)
 		}
 	}
 }
 
 func TestValidateRuntimeABIRejectsOutsideSelectedRuntimeRange(t *testing.T) {
 	t.Parallel()
-	if err := validateRuntimeABI(15, 13, 14); err == nil || !strings.Contains(err.Error(), "outside runtime range 13-14") {
+	platform, arch, data := "windows", "amd64", createMockPEDLL(t, pe.IMAGE_FILE_MACHINE_AMD64, "tree_sitter_python")
+	if runtime.GOOS == "windows" {
+		platform, arch = "macos", "arm64"
+		data = createMockMachODylib(t, macho.CpuArm64, macho.TypeDylib, "_tree_sitter_python")
+	}
+	path := filepath.Join(t.TempDir(), "grammar")
+	writeTestFile(t, path, string(data))
+	_, err := build.NewNativeValidator().Validate(context.Background(), []build.ValidationItem{{
+		Language:   _jsii.Language{Name: "python", Constructor: "tree_sitter_python"},
+		BinaryPath: path, Platform: platform, Arch: arch, GenerateABI: sitter.LANGUAGE_VERSION + 1,
+	}})
+	want := fmt.Sprintf("outside runtime range %d-%d", sitter.MIN_COMPATIBLE_LANGUAGE_VERSION, sitter.LANGUAGE_VERSION)
+	if err == nil || !strings.Contains(err.Error(), want) {
 		t.Fatalf("unexpected result: %v", err)
 	}
 }
 
 func TestQueryFromDifferentGrammarRevisionIsRejectedWithLocation(t *testing.T) {
 	t.Parallel()
+	compiler, err := exec.LookPath("cc")
+	if err != nil {
+		t.Skip("native query validation requires a C compiler")
+	}
+	moduleDir, err := exec.Command("go", "list", "-m", "-f", "{{.Dir}}", "github.com/tree-sitter/tree-sitter-python").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
 	dir := t.TempDir()
+	source := filepath.Join(strings.TrimSpace(string(moduleDir)), "src")
+	library := filepath.Join(dir, "python.so")
+	flags := []string{"-shared", "-fPIC"}
+	platform := runtime.GOOS
+	if platform == "darwin" {
+		platform = "macos"
+		flags = []string{"-dynamiclib", "-fPIC"}
+	}
+	args := append(flags, "-I"+source, filepath.Join(source, "parser.c"), filepath.Join(source, "scanner.c"), "-o", library)
+	if output, err := exec.Command(compiler, args...).CombinedOutput(); err != nil {
+		t.Fatalf("compile Python fixture: %v\n%s", err, output)
+	}
 	nodeTypes := filepath.Join(dir, "node-types.json")
 	queryPath := filepath.Join(dir, "highlights.scm")
 	writeTestFile(t, nodeTypes, "[]\n")
 	writeTestFile(t, queryPath, "(node_from_another_revision) @capture\n")
-	language := sitter.NewLanguage(python.Language())
-	err := validateLanguageArtifacts(language, ValidationItem{
-		Language: _jsii.Language{Name: "python"}, NodeTypesPath: nodeTypes,
-		QueryPaths: []string{queryPath}, Sample: "x = 1\n",
-	})
+	_, err = build.NewNativeValidator().Validate(context.Background(), []build.ValidationItem{{
+		Language:   _jsii.Language{Name: "python", Constructor: "tree_sitter_python"},
+		BinaryPath: library, Platform: platform, Arch: runtime.GOARCH,
+		NodeTypesPath: nodeTypes, QueryPaths: []string{queryPath}, Sample: "x = 1\n",
+	}})
 	if err == nil || !strings.Contains(err.Error(), queryPath) || !strings.Contains(err.Error(), "row 1 column") {
 		t.Fatalf("expected located query error, got %v", err)
 	}
+}
+
+// The public validator performs static validation for foreign targets.
+func validateTestBinaryFormat(t *testing.T, path, platform, arch, constructor string) error {
+	t.Helper()
+	if (platform == "windows" && runtime.GOOS == "windows") || (platform == "macos" && runtime.GOOS == "darwin") {
+		t.Skip("synthetic binaries cannot be loaded on their own target")
+	}
+	_, err := build.NewNativeValidator().Validate(context.Background(), []build.ValidationItem{{
+		Language:   _jsii.Language{Name: "python", Constructor: constructor},
+		BinaryPath: path, Platform: platform, Arch: arch, GenerateABI: 15,
+	}})
+	return err
 }
 
 func writeTestFile(t *testing.T, path, content string) {
@@ -64,7 +129,7 @@ func TestValidatePEBinaryValid(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := validateBinaryFormat(dllPath, "windows", "amd64", "tree_sitter_python"); err != nil {
+	if err := validateTestBinaryFormat(t, dllPath, "windows", "amd64", "tree_sitter_python"); err != nil {
 		t.Fatalf("expected PE validation to pass, got: %v", err)
 	}
 }
@@ -78,7 +143,7 @@ func TestValidatePEBinaryWrongMachine(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := validateBinaryFormat(dllPath, "windows", "amd64", "tree_sitter_python")
+	err := validateTestBinaryFormat(t, dllPath, "windows", "amd64", "tree_sitter_python")
 	if err == nil || !strings.Contains(err.Error(), "expected amd64") {
 		t.Fatalf("expected machine mismatch error, got: %v", err)
 	}
@@ -93,7 +158,7 @@ func TestValidatePEBinaryMissingExports(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := validateBinaryFormat(dllPath, "windows", "amd64", "tree_sitter_python")
+	err := validateTestBinaryFormat(t, dllPath, "windows", "amd64", "tree_sitter_python")
 	if err == nil || !strings.Contains(err.Error(), "PE export directory") {
 		t.Fatalf("expected missing exports error, got: %v", err)
 	}
@@ -108,7 +173,7 @@ func TestValidatePEBinaryWrongConstructor(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := validateBinaryFormat(dllPath, "windows", "amd64", "tree_sitter_python")
+	err := validateTestBinaryFormat(t, dllPath, "windows", "amd64", "tree_sitter_python")
 	if err == nil || !strings.Contains(err.Error(), "expected only \"tree_sitter_python\"") {
 		t.Fatalf("expected constructor mismatch error, got: %v", err)
 	}
@@ -123,7 +188,7 @@ func TestValidateMachOBinaryValidAmd64(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := validateBinaryFormat(dylibPath, "macos", "amd64", "tree_sitter_python"); err != nil {
+	if err := validateTestBinaryFormat(t, dylibPath, "macos", "amd64", "tree_sitter_python"); err != nil {
 		t.Fatalf("expected Mach-O amd64 validation to pass, got: %v", err)
 	}
 }
@@ -137,7 +202,7 @@ func TestValidateMachOBinaryValidArm64(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := validateBinaryFormat(dylibPath, "macos", "arm64", "tree_sitter_python"); err != nil {
+	if err := validateTestBinaryFormat(t, dylibPath, "macos", "arm64", "tree_sitter_python"); err != nil {
 		t.Fatalf("expected Mach-O arm64 validation to pass, got: %v", err)
 	}
 }
@@ -151,7 +216,7 @@ func TestValidateMachOBinaryWrongCPU(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := validateBinaryFormat(dylibPath, "macos", "arm64", "tree_sitter_python")
+	err := validateTestBinaryFormat(t, dylibPath, "macos", "arm64", "tree_sitter_python")
 	if err == nil || !strings.Contains(err.Error(), "expected CpuArm64") {
 		t.Fatalf("expected CPU mismatch error, got: %v", err)
 	}
@@ -166,7 +231,7 @@ func TestValidateMachOBinaryWrongType(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := validateBinaryFormat(dylibPath, "macos", "amd64", "tree_sitter_python")
+	err := validateTestBinaryFormat(t, dylibPath, "macos", "amd64", "tree_sitter_python")
 	if err == nil || !strings.Contains(err.Error(), "expected TypeDylib") {
 		t.Fatalf("expected file type error, got: %v", err)
 	}
@@ -181,7 +246,7 @@ func TestValidateMachOBinaryWrongConstructor(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := validateBinaryFormat(dylibPath, "macos", "amd64", "tree_sitter_python")
+	err := validateTestBinaryFormat(t, dylibPath, "macos", "amd64", "tree_sitter_python")
 	if err == nil || !strings.Contains(err.Error(), "expected only \"tree_sitter_python\"") {
 		t.Fatalf("expected constructor mismatch error, got: %v", err)
 	}
@@ -208,8 +273,8 @@ func TestDualModeValidationCrossPlatform(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	validator := NewNativeValidator()
-	items := []ValidationItem{
+	validator := build.NewNativeValidator()
+	items := []build.ValidationItem{
 		{
 			Language:      _jsii.Language{Name: "python", Grammar: "python", Constructor: "tree_sitter_python"},
 			BinaryPath:    winPath,
@@ -233,11 +298,11 @@ func TestDualModeValidationCrossPlatform(t *testing.T) {
 		t.Fatalf("expected cross-platform validation to succeed, got: %v", err)
 	}
 
-	if abis[winPath] != 15 {
-		t.Errorf("expected winPath ABI 15, got %d", abis[winPath])
+	if abis[winPath] != 0 {
+		t.Errorf("expected winPath ABI to remain unmeasured (0), got %d", abis[winPath])
 	}
-	if abis[macPath] != 15 {
-		t.Errorf("expected macPath ABI 15, got %d", abis[macPath])
+	if abis[macPath] != 0 {
+		t.Errorf("expected macPath ABI to remain unmeasured (0), got %d", abis[macPath])
 	}
 }
 

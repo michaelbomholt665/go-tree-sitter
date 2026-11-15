@@ -28,6 +28,12 @@ func (r *RecordingRunner) Run(ctx context.Context, cmd _jsii.Command) error {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			return err
 		}
+		parser := filepath.Join(cmd.Dir, "src", "parser.c")
+		if _, err := os.Stat(parser); os.IsNotExist(err) {
+			if err := os.WriteFile(parser, []byte("#define LANGUAGE_VERSION 15\n"), 0644); err != nil {
+				return err
+			}
+		}
 		return os.WriteFile(path, []byte("[]\n"), 0o644)
 	}
 	return nil

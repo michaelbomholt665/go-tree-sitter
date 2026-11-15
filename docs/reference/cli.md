@@ -18,20 +18,316 @@ go run ./cmd/ts-build [command] [flags]
 
 ---
 
+## Configuration selection
+
+The binary embeds the repository's complete `tree-sitter-config.yaml` at build time, including grammar pins and historical assessments.
+Normal use requires no configuration flag and no `.env` file.
+
+| Context | Selected configuration |
+| --- | --- |
+| Current directory has `.env` with `TS_BUILD_ENV=DEVELOPMENT` | `./tree-sitter-config.yaml` |
+| No development marker, including `TS_BUILD_ENV=PRODUCTION` | OS user configuration below |
+
+| OS | User configuration |
+| --- | --- |
+| Linux | `$XDG_CONFIG_HOME/ts-build/tree-sitter-config.yaml`, or `~/.config/ts-build/tree-sitter-config.yaml` when unset |
+| macOS | `~/Library/Application Support/ts-build/tree-sitter-config.yaml` |
+| Windows | `%AppData%/ts-build/tree-sitter-config.yaml` |
+
+If the user configuration is missing, the app creates it from the embedded catalog.
+Existing configurations are never overwritten or silently replaced, including after binary upgrades.
+Initialized configurations use OS cache paths for builds and OS data paths for published grammars.
+Relative paths in a selected configuration resolve against that file's directory, not the current working directory.
+
+The repository includes a tracked `.env` containing `TS_BUILD_ENV=DEVELOPMENT`.
+Run `go run ./cmd/ts-build ...` from the repository root to use its local configuration and existing directory layout.
+An installed binary invoked from that same marked directory also uses the local configuration.
+The app does not search parent directories, import `.env` settings into the process environment, or infer execution mode from the executable path.
+If development mode is selected and the local configuration is missing, the command fails rather than selecting the user configuration.
+Invalid marker values and invalid existing configurations also produce errors.
+
+Use `ts-build config path` to print the selected configuration file's absolute path.
+The command uses the same selection and first-run initialization as other commands.
+It does not parse the YAML, so it can locate an existing file with invalid settings.
+
+```bash
+ts-build config path
+```
+
+The existing `--config`/`-c` flag remains an explicit override for compatibility.
+Help, version, completion, and the blocked manifest-regeneration command do not initialize a configuration.
+
+Runtime defaults come from `runtime` in the selected YAML. Explicit flags override them, including explicit `false` values.
+The flag tables below show compatibility defaults; YAML can change publication, WASM, and cross-validation defaults.
+See [Runtime Policies](configuration-schema.md#5-runtime-policies-runtime) for the full schema.
+
+`build_dir` is the intermediate workspace; `output.grammar_base` is the published destination.
+Use `{build_dir}` in the intermediate output templates to relocate the complete workspace.
+After successful publication, `runtime.cleanup.after_move` selects `keep`, `prune`, or `remove` (default).
+`move --clean=false` forces `keep`; `move --clean=true` forces `remove`.
+A failed validation or publication retains intermediate files.
+
+The wizard is interactive. `runtime.wizard` defines its initial platform and artifact selections.
+The Makefile remains a development-only command shortcut and is not part of runtime configuration.
+
+---
+
+## Settings editor
+
+`ts-build config edit` opens a categorized editor for all non-language settings.
+The main wizard also provides **Settings**, **Build grammars**, and **Exit** sections.
+After saving settings, the wizard returns to its main menu. A subsequent build loads the saved configuration.
+
+The editor shows current values with defaults applied. It provides enum choices, boolean prompts, and text or integer inputs.
+Lists and mappings provide add, edit, and remove actions. Structured entries provide field menus rather than requiring JSON input.
+Changes remain in memory until **Review and save** and an explicit confirmation. Discard or interruption does not save pending changes.
+Each change must preserve a valid configuration. Adjust dependent settings in a valid order.
+For example, change wizard platform defaults before removing a platform from `runtime.supported_targets`.
+
+The same settings are available through direct commands:
+
+```bash
+ts-build config show --json
+ts-build config get runtime.cleanup.after_move
+ts-build config set runtime.cleanup.after_move keep
+ts-build config set runtime.cleanup.after_move keep --apply
+ts-build config set runtime.sync_modules '{"example.com/grammar":["python"]}' --apply
+ts-build config validate
+ts-build config edit
+```
+
+| Command | Behavior |
+| --- | --- |
+| `config path` | Print the selected configuration path. |
+| `config show [--json]` | Show all non-language settings with defaults applied. |
+| `config get <key> [--json]` | Read one editable setting. |
+| `config set <key> <value>` | Preview one complete setting replacement; default does not save. |
+| `config set <key> <value> --apply` | Validate and save one replacement. |
+| `config edit` | Edit settings interactively, review the complete change list, then confirm saving. |
+| `config validate [--json]` | Validate the schema and check workspace/publication directory separation. |
+
+Keys use YAML names separated by dots, such as `output.grammar_base` and `runtime.tools.git`.
+Root names are case-sensitive; use `OS_TARGET` for the default operating system.
+Maps and lists are complete values in `config set`; individual module names or list indexes are not dotted keys.
+Use ordinary text or a quoted JSON string for strings. Use typed JSON for booleans, integers, arrays, and objects.
+Nullable settings accept `null` to restore their fallback behavior. Empty arrays and objects retain their schema-defined meaning.
+If a value starts with a dash, place `--` before positional arguments or provide it as a quoted JSON string.
+`config set` supports `--dry-run`, `--apply`, and `--json`. The two mode flags are mutually exclusive.
+Its JSON result includes `key`, `before`, `after`, `changed`, `applied`, and `warnings`.
+Defaulted values are displayed without rebasing relative paths; relative paths still resolve from the selected configuration directory during execution.
+
+Both editors preserve unrelated values, comments, grammar pins, and assessments. YAML formatting can change.
+They share atomic file replacement, concurrency checks, and the update lock with `support update`.
+Symlink configurations are rejected when writing. A saved setting takes effect in subsequent commands, not a running build.
+Editing settings never executes tools, deletes workspaces, or republishes artifacts.
+Tool and cleanup settings affect later build/clean/publication commands; review their warnings before saving.
+The editor cannot change `languages`; use `support update` for assessments and edit grammar pins separately.
+Deprecated fields remain editable for compatibility but retain their documented legacy behavior.
+
 ## Persistent Global Flags
 
 These flags are available on all subcommands:
 
 | Flag | Shorthand | Type | Default | Description |
 | :--- | :--- | :--- | :--- | :--- |
-| `--config` | `-c` | string | `tree-sitter-config.yaml` | Path to the YAML configuration file. |
+| `--config` | `-c` | string | `tree-sitter-config.yaml` | Explicit configuration override; otherwise select the development or OS user configuration automatically. |
 | `--verbose` | `-v` | bool | `false` | Stream raw child-process stdout/stderr in real time. |
 | `--quiet` | `-q` | bool | `false` | Silence all non-error output. |
+| `--dry-run` | | bool | `false` | Validate inputs and preview actions without executing tools or changing files. |
 | `--help` | `-h` | bool | | Display help information for any command. |
 
 ---
 
+## Dry runs
+
+Add `--dry-run` before or after a subcommand to preview its actions.
+The flag does not run external tools, clone repositories, write artifacts, publish releases, or clean workspaces.
+Missing OS user configuration is prepared in memory, not created on disk.
+Explicit configuration paths and development markers retain their normal validation rules.
+
+```bash
+ts-build build --language python --force --dry-run
+ts-build compile --language python --os linux --arch amd64 --dry-run
+ts-build move --language python --js --manifest=false --dry-run
+ts-build clean --language python --prune --dry-run
+ts-build export --language python --to /tmp/parsers --dry-run
+ts-build wizard --dry-run
+```
+
+| Command group | Dry-run behavior |
+| --- | --- |
+| `build`, `compile`, `move`, `clean`, `compact` | Print JSON plans with selected grammars, resolved request options, paths, tools, and planned actions. |
+| `export` | Check source and destination conflicts, reject unsafe file types, and show the copy plan without creating staging directories. |
+| `wizard` | Keep interactive selection; print plans instead of executing the selected pipeline. |
+| `config edit`, wizard Settings | Keep interactive editing and review; confirmation previews saving without writing. |
+| `config set`, `support update` | Validate and preview changes; reject combining `--dry-run` with `--apply`. |
+| `sync-config` | Compute and report version changes without saving them. |
+| Read-only commands, help, completion | Retain their normal read-only output. |
+| `regen-manifests` | Retain the manifest-only regeneration refusal. |
+
+Dry runs validate flags, configuration, language selection, and requested target compatibility.
+They do not prove that a build succeeds. Tool availability, tool versions, network access, binary validity, and runtime permissions remain unchecked.
+Compact generation and lossless checks are planned, not performed.
+Report checksums requested with `support update --check-report` are still checked locally; no fixture code executes.
+A nonzero exit status identifies a detected input or preflight error, not a simulated build failure.
+
+---
+
 ## Subcommands
+
+### `ts-build list`
+
+Lists configured grammars, not only published grammars.
+Shows recorded source-language bounds, the effective claim, evidence rule, and assessment status.
+Missing bounds display as `unknown`.
+
+```bash
+ts-build list
+ts-build list --language kotlin
+ts-build list --json
+```
+
+| Rule | Meaning |
+| --- | --- |
+| 1 | No recorded assessment. |
+| 2 | Recorded documentation assessment, including inconclusive research and estimated bounds. Documentation-backed claims can be verified. |
+| 3 | Recorded successful version-specific fixture evidence. Verification remains limited to its tested versions and syntax coverage. |
+
+Rule numbers describe recorded evidence; this command does not fetch sources, verify report digests, or execute fixtures.
+`--json` includes active revisions, historical assessment revisions, limitations, and full evidence records.
+If the revisions differ, the effective claim is `unverified`, bounds display as unknown, and the assessment is `stale`.
+The JSON retains historical bounds inside `assessment`; they do not describe the active revision.
+Package versions and parser ABIs are not source-language version bounds.
+
+### `ts-build support show` / `ts-build support update`
+
+Inspect or replace one grammar's `language_support` assessment in the selected configuration.
+Users can supply their own external fixture suites and reports; repository fixtures are not required.
+The command does not execute tests, fetch sources, build parsers, or publish artifacts.
+
+```bash
+ts-build support show --language python --json
+ts-build support update --language python --assessment ./assessment.json --check-report --dry-run --json
+ts-build support update --language python --assessment ./assessment.json --check-report --apply --json
+```
+
+| Update flag | Default | Meaning |
+| --- | --- | --- |
+| `--language`, `-l` | Required | Exact configured grammar identifier. |
+| `--assessment` | Required | Complete assessment JSON file; `-` reads stdin. |
+| `--expect-revision` | Unset | Require this full SHA to match the current grammar pin. |
+| `--dry-run` | Preview | Validate and show before/after values without saving. Preview also applies when neither mode flag is supplied. |
+| `--apply` | `false` | Save the validated assessment. Mutually exclusive with `--dry-run`. |
+| `--check-report` | `false` | Read every syntax-fixture report and compare its SHA-256. Require at least one fixture record. |
+| `--json` | `false` | Emit before/after values, `changed`, `applied`, and `reports_checked`; assessment errors return an `error` field. |
+
+Use the existing assessment fields: `assessed_revision`, `claim`, `min_version`, `max_version`, `limitations`, and `evidence`.
+The claim must be explicit: `unverified` or `verified`.
+The assessed full SHA must match the active grammar revision. Unknown JSON fields are rejected.
+The update replaces the complete assessment; it does not append evidence to an older assessment.
+
+For example, create `assessment.json` with this structure. Replace the placeholders before use:
+
+```jsonc
+// assessment.json (save as strict JSON without this comment)
+{
+  "assessed_revision": "FULL_40_CHARACTER_ACTIVE_GRAMMAR_SHA",
+  "claim": "verified",
+  "min_version": "3.12",
+  "max_version": "3.12",
+  "limitations": ["Only the syntax assertions in the supplied suite were tested; not complete Python conformance."],
+  "evidence": [{
+    "kind": "syntax_fixtures",
+    "source": "./report.json",
+    "description": "User-owned version-specific fixtures, syntax assertions, fixture checksums, results, and exclusions.",
+    "sha256": "SHA256_OF_REPORT_FILE",
+    "result": "passed",
+    "tested_versions": ["3.12"]
+  }]
+}
+```
+
+Record the exact grammar revision, suite identity, fixture checksums, assertions, results, and exclusions in the report.
+Calculate the report's SHA-256 after completing it. The command accepts any regular report file; it does not certify its contents.
+Fixture evidence is Rule 3. Documentation-backed verification remains Rule 2, not Rule 3.
+Successful isolated fixtures do not prove full conformance or a continuous version range.
+See [VERIFY_VERSIONS.md](../../VERIFY_VERSIONS.md) for the evidence policy.
+
+Relative fixture report paths resolve against the assessment file's directory, or the current directory for stdin.
+The command saves local report references as absolute paths. Reports can remain outside this repository.
+Without `--check-report`, remote report references remain references only.
+With `--check-report`, reports must use local paths or local `file://` URLs; HTTP downloads are not supported.
+The checksum check verifies report integrity, not the truth of the test results.
+
+The command preserves unrelated values, YAML comments, key order, and file permissions. YAML formatting can change.
+It stages the replacement beside the selected configuration and checks for content changes before replacing the file.
+Cooperating update commands use `<config>.support.lock`; symlink configurations are rejected when writing.
+If an interrupted process leaves a lock file, confirm no update is running before removing that lock.
+Other editors do not honor this lock; avoid simultaneous edits from those programs.
+The command does not change grammar pins, other runtime settings, or published manifests.
+
+### `ts-build export`
+
+Copies published grammar directories to a destination without deleting the published originals.
+Copies every regular file, including binaries, `node-types.json`, optional `grammar.js`, queries, and optional manifests.
+A manifest is not required.
+
+```bash
+ts-build --config /path/to/tree-sitter-config.yaml export --to /path/to/consumer/grammars
+ts-build --config /path/to/tree-sitter-config.yaml export --language python --to /path/to/consumer/grammars
+```
+
+The destination receives `<destination>/<grammar-name>/...`.
+The source is `output.grammar_base`, resolved relative to the configuration file when it is not absolute.
+An explicit configuration path makes export usable from another working directory through an installed `ts-build`.
+The default selection includes configured grammars with published directories; it skips grammars that are not yet published.
+If an explicitly selected grammar is not published, the command fails.
+
+WARNING: `--force` replaces each selected destination grammar directory, including files absent from the source. Preserve consumer-specific files outside those directories.
+
+Without `--force`, an existing selected directory causes failure before export changes grammar files.
+Unselected destination directories remain untouched.
+Export stages all selected grammars before replacing destination directories and attempts rollback if installation fails.
+Source and destination paths must not overlap, including through symbolic links.
+Grammar contents must be regular files or directories; symbolic links and special files are rejected.
+Do not modify source or destination directories concurrently with export.
+
+### `ts-build sync-config`
+
+Synchronizes grammar package versions from `go.mod` into the YAML configuration.
+It preserves grammar revision pins and historical language-support assessments.
+The default `go.mod` path is beside the configuration file; `--gomod` overrides it.
+
+```bash
+ts-build --config /path/to/tree-sitter-config.yaml sync-config --dry-run
+ts-build --config /path/to/tree-sitter-config.yaml sync-config --gomod /path/to/go.mod
+```
+
+After a version changes, resolve its corresponding upstream commit and update the full revision pin deliberately.
+Do not repin historical assessments without new evidence.
+The compatibility entry point `go run ./cmd/sync-config` uses the same implementation.
+
+### `ts-build regen-manifests`
+
+Retains the standalone tool's safety refusal as an installed CLI subcommand.
+It returns an error without writing artifacts.
+Manifest-only regeneration remains disabled because downstream ABI and checksum metadata require validation of real binaries.
+Use the binary-validated `build` → `compile` → `move --manifest=true` pipeline instead.
+The compatibility entry point `go run ./cmd/regen-manifests` also remains disabled.
+
+### Publish raw artifacts with `grammar.js`
+
+The existing `move --js` flag includes `grammar.js`; `--manifest=false` omits custom manifest generation.
+These options also appear in the wizard.
+Binary validation still applies, and successful publication cleans intermediate build directories by default.
+
+```bash
+ts-build build --language python
+ts-build compile --language python
+ts-build move --language python --json --js --manifest=false
+```
+
+---
 
 ### `ts-build wizard` *(recommended for human use)*
 
@@ -48,7 +344,7 @@ The wizard walks through the following steps in order:
 | 1 | **Pipeline** | Choose which phases to run: build only, build+compile, full end-to-end, compile only, or publish only. |
 | 2 | **Target Platforms** | Multi-select from Linux amd64, macOS arm64, macOS amd64, Windows amd64, and WebAssembly. |
 | 3 | **Artifacts & Options** | Toggle `manifest.json`, `.scm` query files, `compact-node-types.yaml`, C/C++ sources, `grammar.js`, WebAssembly staging, force-overwrite, and build-cache pruning. |
-| 4 | **Grammars** | Select any subset of the 42 configured languages, or choose **[ ALL ]** to process everything. |
+| 4 | **Grammars** | Select any subset of the 65 configured languages, or choose **[ ALL ]** to process everything. |
 
 Before executing, the wizard displays a compact summary and prompts for final confirmation. Pressing `N` aborts cleanly without touching any files.
 

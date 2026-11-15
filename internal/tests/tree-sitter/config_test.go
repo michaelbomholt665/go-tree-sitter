@@ -15,7 +15,8 @@ func TestLoadConfigAppliesDefaults(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "tree-sitter-config.yaml")
 	content := `
-version: "1.0"
+version: "2.0"
+tree_sitter_cli_version: "0.26.8"
 abi_versions:
   ">=0.25": { min: 13, max: 15 }
 languages:
@@ -23,6 +24,8 @@ languages:
     version: "v0.25.0"
     tree_sitter_version: "0.25.0"
     repository: "https://github.com/tree-sitter/tree-sitter-python.git"
+    revision: "0123456789012345678901234567890123456789"
+    sample: "example"
 output:
   generate_manifest: false
 `
@@ -64,7 +67,8 @@ func TestLoadConfigRejectsDuplicateLanguages(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "tree-sitter-config.yaml")
 	content := `
-version: "1.0"
+version: "2.0"
+tree_sitter_cli_version: "0.26.8"
 build_dir: "build"
 abi_versions:
   ">=0.25": { min: 13, max: 15 }
@@ -73,10 +77,14 @@ languages:
     version: "v0.25.0"
     tree_sitter_version: "0.25.0"
     repository: "https://github.com/tree-sitter/tree-sitter-python.git"
+    revision: "0123456789012345678901234567890123456789"
+    sample: "example"
   - name: "python"
     version: "v0.25.0"
     tree_sitter_version: "0.25.0"
     repository: "https://github.com/tree-sitter/tree-sitter-python.git"
+    revision: "0123456789012345678901234567890123456789"
+    sample: "example"
 output:
   grammar_base: "data/tree-sitter/grammar"
   generate_manifest: true
@@ -100,13 +108,17 @@ func TestLoadConfigValidatesOSTarget(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "tree-sitter-config.yaml")
 	content := `
-version: "1.0"
+version: "2.0"
+tree_sitter_cli_version: "0.26.8"
 build_dir: "build"
 OS_TARGET: "linux"
 targets:
   windows:
     os: "windows"
     arch: "amd64"
+    triple: "x86_64-windows-gnu"
+    compiler: "x86_64-w64-mingw32-gcc"
+    compiler_version: "14.2.0"
 abi_versions:
   ">=0.25": { min: 13, max: 15 }
 languages:
@@ -114,6 +126,8 @@ languages:
     version: "v0.25.0"
     tree_sitter_version: "0.25.0"
     repository: "https://github.com/tree-sitter/tree-sitter-python.git"
+    revision: "0123456789012345678901234567890123456789"
+    sample: "example"
 output:
   grammar_base: "data/tree-sitter/grammar"
   generate_manifest: true
